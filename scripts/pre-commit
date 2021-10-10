@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+for FILE in $(git diff --cached --name-only); do
+  if [[ "$FILE" =~ \.(c|h|cpp|cc)$ ]]; then
+    OLD=$(sha1sum < "$FILE")
+    NEW=$(clang-format "$FILE" | sha1sum)
+    if [[ ! $OLD = $NEW ]]; then
+      echo "$FILE not formatted" >&2
+      exit 1
+    fi
+  fi
+done

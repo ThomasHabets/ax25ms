@@ -1,0 +1,81 @@
+/*
+   Copyright 2021 Google LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+syntax = "proto3";
+
+package ax25ms;
+
+option go_package = "github.com/ThomasHabets/ax25ms/pkg/api";
+
+message Frame {
+  bytes payload = 1;
+}
+
+message StreamRequest {
+}
+
+message SendRequest {
+  Frame frame = 1;
+}
+
+message SendResponse {}
+
+message ConnectionSettings {
+  bool extended = 1;
+}
+
+message Address {
+  string address = 1;
+}
+
+message SeqMetadata {
+  Address address = 1;
+  repeated Address digipeaters = 2;
+  ConnectionSettings connection_settings = 3;
+  Address source_address = 4;
+}
+
+message SeqConnectRequest {
+  SeqPacket packet = 1;
+  int64 timeout_ms = 2;
+}
+
+message SeqConnectResponse {
+  SeqPacket packet = 1;
+}
+
+message SeqAcceptRequest {
+  SeqPacket packet = 1;
+}
+
+message SeqAcceptResponse {
+  SeqPacket packet = 1;
+}
+
+message SeqPacket {
+  // Sending metadata is only mandatory on the first call.
+  SeqMetadata metadata = 1;
+  bytes payload = 2;
+}
+
+service RouterService {
+  rpc StreamFrames(StreamRequest) returns (stream Frame) {}
+  rpc Send(SendRequest) returns (SendResponse) {}
+}
+
+service SeqPacketService {
+  rpc Accept(stream SeqAcceptRequest) returns (stream SeqAcceptResponse) {}
+  rpc Connect(stream SeqConnectRequest) returns (stream SeqConnectResponse) {}
+}

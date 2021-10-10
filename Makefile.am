@@ -1,0 +1,50 @@
+AUTOMAKE_OPTIONS=foreign
+DISTCLEANFILES=*~
+AM_CPPFLAGS=-I$(builddir)
+
+bin_PROGRAMS=listen serial seqpacket decode seqpacket_client
+
+listen_SOURCES=\
+src/listen.cc \
+src/parse.cc \
+src/mic-e.cc \
+proto/gen/ax25.pb.cc \
+proto/gen/aprs.pb.cc \
+proto/gen/api.grpc.pb.cc \
+proto/gen/api.pb.cc
+
+decode_SOURCES=\
+src/decode.cc \
+src/parse.cc \
+src/mic-e.cc \
+src/aprs.cc \
+proto/gen/ax25.pb.cc \
+proto/gen/aprs.pb.cc \
+proto/gen/api.grpc.pb.cc \
+proto/gen/api.pb.cc
+
+serial_SOURCES=\
+src/serial.cc \
+proto/gen/api.grpc.pb.cc \
+proto/gen/api.pb.cc
+
+seqpacket_SOURCES=\
+src/seqpacket.cc \
+src/serialize.cc \
+src/parse.cc \
+src/scheduler.cc \
+proto/gen/ax25.pb.cc \
+proto/gen/aprs.pb.cc \
+proto/gen/api.grpc.pb.cc \
+proto/gen/api.pb.cc
+
+seqpacket_client_SOURCES=\
+src/seqpacket_client.cc \
+proto/gen/ax25.pb.cc \
+proto/gen/aprs.pb.cc \
+proto/gen/api.grpc.pb.cc \
+proto/gen/api.pb.cc
+
+
+lsp:
+	~/.local/bin/intercept-build make

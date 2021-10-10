@@ -1,0 +1,138 @@
+/*
+   Copyright 2021 Google LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+syntax = "proto3";
+
+package ax25;
+
+option go_package = "github.com/ThomasHabets/ax25ms/pkg/proto/ax25";
+
+import "aprs.proto";
+
+message Repeater {
+  string address = 1;
+  bool has_been_repeated = 2;
+}
+
+message Packet {
+  string dst = 1;
+  string src = 2;
+  repeated Repeater repeater = 3;
+
+  message SABME {
+    bool poll = 1;
+  }
+  message SABM {
+    bool poll = 1;
+  }
+  message DISC {
+    bool poll = 1;
+  }
+  message DM {
+    bool poll = 1;
+  }
+  message UA {
+    bool poll = 1;
+  }
+  message FRMR {
+    bool poll = 1;
+  }
+  message XID {
+    bool poll = 1;
+  }
+  message TEST {
+    bool push = 1;
+    bytes info = 2;
+  }
+  message UI {
+    int32 pid = 1;
+    int32 push = 2;
+    bytes payload = 3;
+  }
+  message UFrame {
+    // 8bit
+    // 3 modifier bits // 4.2.1.3
+    // Poll/Final
+    // 2 M bits
+
+  }
+  message SFrame {
+    int32 nr = 1;
+    int32 ns = 2;
+    bool poll = 3;
+  }
+  message IFrame {
+    // 3 N(R)
+    int32 nr = 1; // 3 or 7 bits.
+    bool poll = 2;
+    int32 ns = 3; // 3 or 7 bits.
+
+
+    bytes payload = 4;
+
+    bool extended = 5;
+
+    // TODO: renumber proto.
+    int32 pid = 6; // 3.4
+
+    // TODO: what about 0xFF escape pid character?
+  }
+  oneof frame_type {
+    // U Frames.
+    SABME sabme = 11;
+    SABM sabm = 12;
+    DISC disc = 13;
+    DM dm = 14;
+    UA ua = 15;
+    FRMR frmr = 16;
+    UI ui = 17;
+    XID xid = 18;
+    TEST test = 19;
+
+    IFrame iframe = 20;
+    SFrame rr = 22;
+    SFrame rnr = 23;
+    SFrame rej = 24;
+    SFrame srej = 25;
+  }
+
+  aprs.Packet aprs = 21;
+
+  int32 fcs = 6; // 4.4.6
+  // 8/16 control
+  // N*8 bits info
+  // 16 bit FCS
+}
+
+message ParseRequest {
+  bytes payload = 1;
+}
+
+message ParseResponse {
+  Packet packet = 1;
+}
+
+message SerializeRequest {
+  Packet packet = 1;
+}
+
+message SerializeResponse {
+  bytes payload = 1;
+}
+
+service AX25Parser {
+  rpc Parse(ParseRequest) returns (ParseResponse) {}
+  rpc Serialize(SerializeRequest) returns (SerializeResponse) {}
+}

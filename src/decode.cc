@@ -1,0 +1,167 @@
+/*
+   Copyright 2021 Google LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+#include "aprs.h"
+#include "mic-e.h"
+#include "parse.h"
+
+#include "proto/gen/api.grpc.pb.h"
+#include "proto/gen/api.pb.h"
+#include "proto/gen/ax25.pb.h"
+#include <grpcpp/grpcpp.h>
+#include <fstream>
+#include <regex>
+#include <sstream>
+#include <string>
+
+#include <google/protobuf/text_format.h>
+
+std::string printable(std::string_view sv)
+{
+    std::stringstream ss;
+    for (auto ch : sv) {
+        if (std::isprint(ch)) {
+            ss << ch;
+        } else {
+            ss << "…";
+        }
+    }
+    return ss.str();
+}
+
+std::string aprs_software_dst(std::string_view dst)
+{
+    // APRS101.pdf section 4.
+    std::map<std::string, std::string> prefixes{
+        { "APC", "APRS/CE, Windows CE" },         //
+        { "APD", "Linux aprsd server" },          //
+        { "APE", "PIC-Encoder" },                 //
+        { "API", "Icom radios (future)" },        //
+        { "APIC", "ICQ messaging" },              //
+        { "APK", "Kenwood radios" },              //
+        { "APM", "MacAPRS" },                     //
+        { "APP", "pocketAPRS" },                  //
+        { "APR", "APRSdos" },                     //
+        { "APRS", "older versions of APRSdos" },  //
+        { "APRSM", "older versions of MacAPRS" }, //
+        { "APRSW", "older versions of WinAPRS" }, //
+        { "APS", "APRS+SA" },                     //
+        { "APW", "WinAPRS" },                     //
+        { "APX", "X-APRS" },                      //
+        { "APY", "Yaesu radios (future)" },       //
+        { "APZ", "Experimental" },                //
+    };
+
+    // TODO: return version numbers, making sure only version number
+    // follows
+    for (auto& [k, v] : prefixes) {
+        if (dst.substr(0, k.length()) == k) {
+            return v;
+        }
+    }
+    return "";
+}
+
+std::string stringify(const ax25::Packet& packet)
+{
+    std::stringstream ss;
+
+    if (true) {
+        std::string str;
+        google::protobuf::TextFormat::PrintToString(packet, &str);
+        return str + "-----------------------------------------------------\n";
+    }
+
+    ss << "AX25\n"
+       << "  From: " << packet.src() << "\n"
+       << "  To: " << packet.dst();
+    if (auto sw = aprs_software_dst(packet.dst()); !sw.empty()) {
+        ss << " (" << sw << ")";
+    }
+    ss << "\n";
+    for (const auto& digi : packet.repeater()) {
+        ss << "  Repeater: " << digi.address() << (digi.has_been_repeated() ? "*" : "")
+           << "\n";
+    }
+    if (packet.has_ui()) {
+        ss << "  UI\n"
+           << "  Pid: " << std::hex << packet.ui().pid() << "\n"
+           << "  Payload (" << std::dec << packet.ui().payload().size()
+           << "): " << printable(packet.ui().payload()) << "\n";
+
+        if (packet.has_aprs()) {
+            const auto& aprs = packet.aprs();
+            ss << "  APRS\n";
+            if (aprs.has_position()) {
+                ss << "    Lat:  " << aprs.position().lat() << "\n"
+                   << "    Long: " << aprs.position().lng() << "\n"
+                   << "    Symbol: " << printable(aprs.position().symbol()) << "\n";
+            }
+            ss << "    Status: " << printable(aprs.status()) << "\n";
+            if (aprs.has_mic_e()) {
+                ss << "    Mic-E\n"
+                   << "      Position current: " << aprs.mic_e().position_current()
+                   << "\n"
+                   << "      Mic-E message: " << aprs.mic_e().msg() << "\n";
+            }
+            if (aprs.has_msg()) {
+                auto& msg = aprs.msg();
+                ss << "    MSG\n"
+                   << "      Dst: <" << msg.dst() << ">\n"
+                   << "      MsgNo: <" << msg.msg_number() << ">\n"
+                   << "      Msg: <" << msg.msg() << ">\n";
+            }
+        }
+    }
+    if (packet.has_sabm()) {
+        ss << "  SABM\n";
+    }
+    if (packet.has_disc()) {
+        ss << "  DISC\n";
+    }
+    return ss.str();
+}
+
+int main(int argc, char** argv)
+{
+    for (int i = 1; i < argc; i++) {
+        const std::string fn = argv[i];
+        const auto payload = [fn]() -> std::string {
+            std::ifstream f(fn);
+            std::stringstream buf;
+            buf << f.rdbuf();
+            return buf.str();
+        }();
+
+        auto [packet, status] = ax25::parse(payload);
+        if (!status.ok()) {
+            std::cerr << "Failed to parse packet: " << status.error_message() << "\n";
+        } else {
+            // Try to parse as Mic-E.
+            const auto [me, status] = mic_e::parse(packet);
+            if (status.ok()) {
+                *packet.mutable_aprs() = me;
+            } else if (packet.has_ui() && packet.ui().pid() == 0xf0) {
+                const auto [ap, status] = aprs::parse(packet.ui().payload());
+                if (status.ok()) {
+                    *packet.mutable_aprs() = ap;
+                } else {
+                    std::cout << "APRS error: " << status.error_message() << "\n";
+                }
+            }
+            std::cout << "// file: " << fn << "\n" << stringify(packet);
+        }
+    }
+}
