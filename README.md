@@ -31,15 +31,13 @@ pybind11 or SWIG.
 
 It's pretty messy. What I aim to get working is this:
 
-![Alt text](https://g.gravizo.com/source/custom_mark10?https%3A%2F%2Fraw.githubusercontent.com%2FThomasHabets%2Fax25ms%2Fmain%2FREADME.md)
-<details> 
-<summary></summary>
-  digraph G {
-    tnc -> ax25ms_serial;
-    ax25ms_serial -> ax25ms_seqpacket;
-    ax25ms_seqpacket -> ax25ms_axsh;
-  }
-</details>
+```
+ tnc <KISS> serial <gRPC> seqpacket <gRPC> ax25ms_axsh
+```
+
+Then I'll be able to port [axsh][axsh] to use this interface instead of
+kernel-based sockets.
 
 
 [rfc1226]: https://datatracker.ietf.org/doc/html/rfc1226
+[axsh]: https://github.com/ThomasHabets/radiostuff/tree/master/ax25/axsh
