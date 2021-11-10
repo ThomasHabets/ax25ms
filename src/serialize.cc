@@ -13,6 +13,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+/*
+ * Serialize AX.25 from protobuf to payload bytes.
+ * Inverse of parse.
+ * Main specs: http://www.tapr.org/pdf/AX25.2.2.pdf
+ */
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
 #include "proto/gen/ax25.pb.h"

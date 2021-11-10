@@ -13,6 +13,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+/*
+ * Parse AX.25 packets.
+ * Main specs: http://www.tapr.org/pdf/AX25.2.2.pdf
+ */
 // org/info/freqspec.txt
 #include "proto/gen/ax25.pb.h"
 

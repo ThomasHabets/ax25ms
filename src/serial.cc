@@ -13,6 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+/*
+ * Tool
+ *
+ * Relay messages between a KISS TNC and the GRPC interface.
+ * Implements the Router service.
+ */
 #include "fdwrap.h"
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
@@ -27,6 +33,13 @@ limitations under the License.
 #include <vector>
 
 #include <grpcpp/grpcpp.h>
+
+namespace {
+[[noreturn]] void usage(const char* av0, int err)
+{
+    std::cout << av0 << ": Usage [ -h ] [ -l <listen addr> -p </dev/...>\n";
+    exit(err);
+}
 
 class Queue
 {
@@ -247,13 +260,41 @@ FDWrap open_serial(const std::string& port)
     FDWrap ret(open(port.c_str(), O_RDWR | O_NOCTTY));
     return ret;
 }
+} // namespace
 
 int main(int argc, char** argv)
 {
-    const std::string port = argv[1];
+    std::string port;
+    std::string listen = "[::]:12345";
+    {
+        int opt;
+        while ((opt = getopt(argc, argv, "hl:p:")) != -1) {
+            switch (opt) {
+            case 'p':
+                port = optarg;
+                break;
+            case 'l':
+                listen = optarg;
+                break;
+            case 'h':
+                usage(argv[0], EXIT_SUCCESS);
+            default:
+                usage(argv[0], EXIT_FAILURE);
+            }
+        }
+    }
+    if (port.empty()) {
+        std::cerr << "Need to specify serial port (-p)\n";
+        return EXIT_FAILURE;
+    }
+    if (optind != argc) {
+        std::cerr << "Invalid extra args on the command line\n";
+        return EXIT_FAILURE;
+    }
+
     AX25Serial service(open_serial(port));
 
-    const std::string addr("[::]:12345");
+    const std::string addr(listen);
     grpc::ServerBuilder builder;
     builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIME_MS, 500);
     builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 1000);

@@ -22,14 +22,54 @@ limitations under the License.
 #include <google/protobuf/text_format.h>
 #include <grpcpp/grpcpp.h>
 
+#include <unistd.h>
+
+namespace {
+[[noreturn]] void usage(const char* av0, int err)
+{
+    std::cout << av0 << ": Usage [ -h ] -s <mycall> -r <router host:port> dst\n";
+    exit(err);
+}
+} // namespace
+
 int main(int argc, char** argv)
 {
-    const std::string addr = argv[1];
-    const std::string src = argv[2];
-    const std::string dst = argv[3];
+    std::string router;
+    std::string src;
+
+    {
+        int opt;
+        while ((opt = getopt(argc, argv, "hr:s:")) != -1) {
+            switch (opt) {
+            case 'r':
+                router = optarg;
+                break;
+            case 's':
+                src = optarg;
+                break;
+            case 'h':
+                usage(argv[0], EXIT_SUCCESS);
+            default:
+                usage(argv[0], EXIT_FAILURE);
+            }
+        }
+    }
+    if (router.empty()) {
+        std::cerr << "Need to specify router (-r)\n";
+        return EXIT_FAILURE;
+    }
+    if (src.empty()) {
+        std::cerr << "Need to specify src call (-s)\n";
+        return EXIT_FAILURE;
+    }
+    if (optind + 1 != argc) {
+        std::cerr << "Want exactly one non-opt arg: the DST call\n";
+        return EXIT_FAILURE;
+    }
+    const std::string dst = argv[optind];
 
     // Connect to service.
-    auto channel = grpc::CreateChannel(addr, grpc::InsecureChannelCredentials());
+    auto channel = grpc::CreateChannel(router, grpc::InsecureChannelCredentials());
     auto seq = ax25ms::SeqPacketService::NewStub(channel);
 
     grpc::ClientContext ctx;
@@ -39,7 +79,8 @@ int main(int argc, char** argv)
     ax25ms::SeqConnectResponse resp;
     auto stream = seq->Connect(&ctx);
     if (!stream->Write(req)) {
-        std::clog << "Failed to start connect call\n";
+        std::clog << "Failed to start connect RPC: " << stream->Finish().error_message()
+                  << "\n";
         return 1;
     }
     bool connected = false;

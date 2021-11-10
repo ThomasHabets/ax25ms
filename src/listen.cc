@@ -13,6 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+/*
+ * Tool
+ *
+ * Listen to all traffic that goes through a service that implements the Router
+ * Service. This includes the serial port tool.
+ */
 #include "mic-e.h"
 
 #include "proto/gen/api.grpc.pb.h"
@@ -25,6 +31,13 @@ limitations under the License.
 
 namespace ax25 {
 std::pair<ax25::Packet, grpc::Status> parse(const std::string& data);
+}
+
+namespace {
+[[noreturn]] void usage(const char* av0, int err)
+{
+    std::cout << av0 << ": Usage [ -h ] -r <router host:port>\n";
+    exit(err);
 }
 
 void run(grpc::ClientReader<ax25ms::Frame>* reader)
@@ -59,13 +72,35 @@ void run(grpc::ClientReader<ax25ms::Frame>* reader)
         std::cerr << "stream failed: " << status.error_message() << "\n";
     }
 }
+} // namespace
 
 int main(int argc, char** argv)
 {
+    std::string router;
+    {
+        int opt;
+        while ((opt = getopt(argc, argv, "hr:")) != -1) {
+            switch (opt) {
+            case 'r':
+                router = optarg;
+                break;
+            case 'h':
+                usage(argv[0], EXIT_SUCCESS);
+            default:
+                usage(argv[0], EXIT_FAILURE);
+            }
+        }
+    }
+    if (router.empty()) {
+        std::cerr << "Need to specify router (-r)\n";
+        return EXIT_FAILURE;
+    }
+    if (optind != argc) {
+        std::cerr << "Invalid extra args on the command line\n";
+        return EXIT_FAILURE;
+    }
+
     std::clog << "Starting...\n";
-    // Connect.
-    const std::string addr = argv[1];
-    // const std::string addr = "127.0.0.1:12345";
 
     grpc::ChannelArguments args;
     args.SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 500);
@@ -77,7 +112,7 @@ int main(int argc, char** argv)
     args.SetInt(GRPC_ARG_HTTP2_MIN_SENT_PING_INTERVAL_WITHOUT_DATA_MS, 1000);
 
     auto channel =
-        grpc::CreateCustomChannel(addr, grpc::InsecureChannelCredentials(), args);
+        grpc::CreateCustomChannel(router, grpc::InsecureChannelCredentials(), args);
 
     std::unique_ptr<ax25ms::RouterService::Stub> stub{ ax25ms::RouterService::NewStub(
         channel) };

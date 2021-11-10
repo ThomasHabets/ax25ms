@@ -13,10 +13,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-// Main TODOs:
-// * compressed coords: captured/1634057455
-// * BLN
-// * Station capabilities ("<")
+/*
+ * APRS packet parsing code.
+ * Main spec doc: http://www.aprs.org/doc/APRS101.PDF
+ *
+ * Main TODOs:
+ * * compressed coords: captured/1634057455
+ * * BLN
+ * * Station capabilities ("<")
+ */
 #include "parse.h"
 #include "proto/gen/api.pb.h"
 #include "proto/gen/ax25.pb.h"
@@ -29,6 +34,7 @@ namespace aprs {
 
 namespace {
 
+// Parse int and return true on success.
 bool parseint(std::string_view s, std::function<void(int)> f)
 {
     char* end;
@@ -37,6 +43,7 @@ bool parseint(std::string_view s, std::function<void(int)> f)
     return !*end;
 }
 
+// Parse int, throw on failure.
 int must_parseint(std::string_view s)
 {
     int ret;
@@ -46,6 +53,7 @@ int must_parseint(std::string_view s)
     return ret;
 }
 
+// Helper function to be able to run std regex on string_view.
 std::pair<std::match_results<std::string_view::const_iterator>, bool>
 svregex_match(std::string_view s, const std::regex& re)
 {
@@ -85,7 +93,7 @@ parse_pos_sym(std::string_view data)
     };
 }
 
-
+// Take positional data and fill it in on the packet.
 grpc::Status fill_pos(aprs::Packet& packet, std::string_view data)
 {
     const auto [lat, lng, sym, ok] = parse_pos_sym(data);
@@ -113,6 +121,7 @@ parse_pos_without_timestamp_msg(std::string_view data)
     return { ret, grpc::Status::OK };
 }
 
+// Return day, hour, minute, and success.
 std::tuple<int, int, int, bool> parse_timestamp(std::string_view data)
 {
     static const std::regex tsRE(R"((\d{2})(\d{2})(\d{2})z)");

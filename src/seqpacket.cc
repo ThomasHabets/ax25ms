@@ -449,16 +449,51 @@ private:
         connections_;
 };
 
+
 } // namespace ax25ms
+
+namespace {
+[[noreturn]] void usage(const char* av0, int err)
+{
+    std::cout << av0 << ": Usage [ -h ] [ -l <listen address> ] -r <router host:port>\n";
+    exit(err);
+}
+} // namespace
+
 int main(int argc, char** argv)
 {
-    const std::string router = argv[1];
+    std::string router;
+    std::string listen = "[::]:12346";
+    {
+        int opt;
+        while ((opt = getopt(argc, argv, "hr:l:")) != -1) {
+            switch (opt) {
+            case 'r':
+                router = optarg;
+                break;
+            case 'l':
+                listen = optarg;
+                break;
+            case 'h':
+                usage(argv[0], EXIT_SUCCESS);
+            default:
+                usage(argv[0], EXIT_FAILURE);
+            }
+        }
+    }
+    if (router.empty()) {
+        std::cerr << "Need to specify router (-r)\n";
+        return EXIT_FAILURE;
+    }
+    if (optind != argc) {
+        std::cerr << "Invalid extra args on the command line\n";
+        return EXIT_FAILURE;
+    }
 
     // Connect to router.
     auto channel = grpc::CreateChannel(router, grpc::InsecureChannelCredentials());
     std::unique_ptr<ax25ms::RouterService::Stub> stub{ ax25ms::RouterService::NewStub(
         channel) };
-
 
     // Send SABM
     if (false) {
@@ -493,9 +528,8 @@ int main(int argc, char** argv)
     // Start up server.
     std::cout << "Starting up a server" << std::endl;
     ax25ms::SeqPacketImpl service(stub.get());
-    const std::string addr("[::]:12346");
     grpc::ServerBuilder builder;
-    builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
+    builder.AddListeningPort(listen, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
     std::cout << "Server started" << std::endl;

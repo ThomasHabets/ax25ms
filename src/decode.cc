@@ -13,6 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+/*
+ * Tool:
+ *
+ * Decode AX.25 packet deeply (including APRS, if it's APRS), and print it.
+ *
+ */
 #include "aprs.h"
 #include "mic-e.h"
 #include "parse.h"
@@ -21,12 +27,23 @@ limitations under the License.
 #include "proto/gen/api.pb.h"
 #include "proto/gen/ax25.pb.h"
 #include <grpcpp/grpcpp.h>
+
+#include <unistd.h>
 #include <fstream>
 #include <regex>
 #include <sstream>
 #include <string>
 
 #include <google/protobuf/text_format.h>
+
+namespace {
+
+[[noreturn]] void usage(const char* av0, int err)
+{
+    std::cout << av0 << ": Usage [ -h ] <input files...>\n";
+    exit(err);
+}
+
 
 std::string printable(std::string_view sv)
 {
@@ -133,10 +150,23 @@ std::string stringify(const ax25::Packet& packet)
     }
     return ss.str();
 }
+} // namespace
 
 int main(int argc, char** argv)
 {
-    for (int i = 1; i < argc; i++) {
+    {
+        int opt;
+        while ((opt = getopt(argc, argv, "h")) != -1) {
+            switch (opt) {
+            case 'h':
+                usage(argv[0], EXIT_SUCCESS);
+            default:
+                usage(argv[0], EXIT_FAILURE);
+            }
+        }
+    }
+
+    for (int i = optind; i < argc; i++) {
         const std::string fn = argv[i];
         const auto payload = [fn]() -> std::string {
             std::ifstream f(fn);
@@ -145,23 +175,24 @@ int main(int argc, char** argv)
             return buf.str();
         }();
 
-        auto [packet, status] = ax25::parse(payload);
-        if (!status.ok()) {
-            std::cerr << "Failed to parse packet: " << status.error_message() << "\n";
-        } else {
-            // Try to parse as Mic-E.
-            const auto [me, status] = mic_e::parse(packet);
-            if (status.ok()) {
-                *packet.mutable_aprs() = me;
-            } else if (packet.has_ui() && packet.ui().pid() == 0xf0) {
-                const auto [ap, status] = aprs::parse(packet.ui().payload());
-                if (status.ok()) {
-                    *packet.mutable_aprs() = ap;
-                } else {
-                    std::cout << "APRS error: " << status.error_message() << "\n";
-                }
-            }
-            std::cout << "// file: " << fn << "\n" << stringify(packet);
+        auto [packet, status1] = ax25::parse(payload);
+        if (!status1.ok()) {
+            std::cerr << "Failed to parse packet: " << status1.error_message() << "\n";
+            continue;
         }
+
+        // Try to parse as Mic-E.
+        auto [me, status] = mic_e::parse(packet);
+        if (status.ok()) {
+            *packet.mutable_aprs() = me;
+        } else if (packet.has_ui() && packet.ui().pid() == 0xf0) {
+            const auto [ap, status] = aprs::parse(packet.ui().payload());
+            if (status.ok()) {
+                *packet.mutable_aprs() = ap;
+            } else {
+                std::cout << "APRS error: " << status.error_message() << "\n";
+            }
+        }
+        std::cout << "// file: " << fn << "\n" << stringify(packet);
     }
 }
