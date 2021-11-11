@@ -71,18 +71,26 @@ std::string serialize_call(
 }
 } // namespace
 
-std::string serialize(const ax25::Packet& packet, bool dst_high_bit, bool extseq)
+std::string serialize(const ax25::Packet& packet)
 {
     std::string ret;
 
-    ret += serialize_call(packet.dst(), false, dst_high_bit, false, false);
-    ret += serialize_call(packet.src(), packet.repeater().empty(), false, extseq, false);
+    ret += serialize_call(packet.dst(),
+                          false,                     // Not the last call.
+                          packet.command_response(), // Command/Response
+                          packet.rr_dst1(),          // Not used?
+                          false);                    // Possibly DAMA?
+    ret += serialize_call(packet.src(),
+                          packet.repeater().empty(), // Maybe last.
+                          false,                     // Not used?
+                          packet.rr_extseq(),        // De facto extseq
+                          false);                    // DAMA?
     for (int i = 0; i < packet.repeater_size(); i++) {
         ret += serialize_call(packet.repeater(i).address(),
-                              i == packet.repeater_size() - 1,
+                              i == packet.repeater_size() - 1, // Maybe last.
                               packet.repeater(i).has_been_repeated(),
-                              false,
-                              false);
+                              false,  // Not used?
+                              false); // Not used?
     }
 
     // U frames.

@@ -38,6 +38,13 @@ limitations under the License.
 namespace {
 // My compiler doesn't have std::binary_semaphore
 
+[[maybe_unused]] void print_packet(const ax25::Packet& packet)
+{
+    std::string str;
+    google::protobuf::TextFormat::PrintToString(packet, &str);
+    std::cout << str << "-----------------------------------------------------\n";
+}
+
 class binary_semaphore
 {
 public:
@@ -171,8 +178,9 @@ public:
                 continue;
             }
             e.packet.mutable_iframe()->set_nr(nr_);
-            const auto data =
-                ax25::serialize(e.packet, true, modulus_ == extended_modulus);
+            e.packet.set_command_response(true);
+            e.packet.set_rr_extseq(modulus_ == extended_modulus);
+            const auto data = ax25::serialize(e.packet);
 
             ax25ms::SendRequest sreq;
             sreq.mutable_frame()->set_payload(data);
@@ -199,7 +207,9 @@ public:
         packet.set_src(mycall_);
         packet.set_dst(peer_);
         packet.mutable_disc()->set_poll(true);
-        const auto data = ax25::serialize(packet, true, modulus_ == extended_modulus);
+        packet.set_command_response(true);
+        packet.set_rr_extseq(modulus_ == extended_modulus);
+        const auto data = ax25::serialize(packet);
         ax25ms::SendRequest sreq;
         sreq.mutable_frame()->set_payload(data);
         ax25ms::SendResponse resp;
@@ -224,7 +234,9 @@ public:
         packet.set_src(mycall_);
         packet.set_dst(peer_);
         packet.mutable_sabm()->set_poll(true);
-        const auto data = ax25::serialize(packet, true, modulus_ == extended_modulus);
+        packet.set_command_response(true);
+        packet.set_rr_extseq(modulus_ == extended_modulus);
+        const auto data = ax25::serialize(packet);
 
         ax25ms::SendRequest sreq;
         sreq.mutable_frame()->set_payload(data);
@@ -506,7 +518,8 @@ int main(int argc, char** argv)
         } else {
             packet.mutable_disc()->set_poll(true);
         }
-        auto data = ax25::serialize(packet, true, false);
+        packet.set_command_response(true);
+        auto data = ax25::serialize(packet);
 
 
         auto parsed = ax25::parse(data);

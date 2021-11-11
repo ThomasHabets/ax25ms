@@ -114,6 +114,11 @@ message Packet {
   // 8/16 control
   // N*8 bits info
   // 16 bit FCS
+
+  bool rr_extseq = 26; // rr1 bit in src.
+  bool command_response = 27; // Top bit in dst. 3.12.2.
+  bool command_response_la = 28; // Top bit in src. 3.12.3.
+  bool rr_dst1 = 29; // rr1 bit in dst.
 }
 
 message ParseRequest {

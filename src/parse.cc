@@ -116,6 +116,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
             return { ret, err };
         }
         ret.set_dst(dst);
+        ret.set_command_response(top);
         pos += 7;
         if (done) {
             // Dst must not be 'done'.
@@ -129,6 +130,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
         return { ret, err };
     }
     ret.set_src(src);
+    ret.set_command_response_la(top);
     pos += 7;
 
     // AX.25 spec says (3.12.4) that up to two repeaters can be added.
