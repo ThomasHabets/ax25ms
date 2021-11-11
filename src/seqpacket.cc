@@ -535,7 +535,7 @@ int main(int argc, char** argv)
     std::cout << "Server started" << std::endl;
 
     // Start stream
-    {
+    for (;;) {
         grpc::ClientContext ctx;
         ax25ms::StreamRequest req;
         auto reader = stub->StreamFrames(&ctx, req);
@@ -547,7 +547,7 @@ int main(int argc, char** argv)
         if (!status.ok()) {
             std::cerr << "Stream ended with error\n";
         }
+        std::cerr << "Stream ended. Looping\n";
     }
-    std::cerr << "Stream ended\n";
     // server->Wait();
 }
