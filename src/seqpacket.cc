@@ -36,7 +36,6 @@ limitations under the License.
 #include <grpcpp/grpcpp.h>
 
 namespace {
-// My compiler doesn't have std::binary_semaphore
 
 [[maybe_unused]] void print_packet(const ax25::Packet& packet)
 {
@@ -44,37 +43,6 @@ namespace {
     google::protobuf::TextFormat::PrintToString(packet, &str);
     std::cout << str << "-----------------------------------------------------\n";
 }
-
-class binary_semaphore
-{
-public:
-    binary_semaphore()
-    {
-        if (sem_init(&sem_, 0, 1)) {
-            throw std::runtime_error("failed to sem_init()");
-        }
-    }
-    ~binary_semaphore() { sem_destroy(&sem_); }
-    void acquire()
-    {
-        if (sem_wait(&sem_)) {
-            throw std::runtime_error("failed to sem_wait()");
-        }
-    }
-    void release()
-    {
-        if (sem_post(&sem_)) {
-            throw std::runtime_error("failed to sem_post()");
-        }
-    }
-    binary_semaphore(const binary_semaphore&) = delete;
-    binary_semaphore(binary_semaphore&&) = delete;
-    binary_semaphore& operator=(const binary_semaphore&) = delete;
-    binary_semaphore& operator=(binary_semaphore&&) = delete;
-
-private:
-    sem_t sem_;
-};
 
 } // namespace
 
