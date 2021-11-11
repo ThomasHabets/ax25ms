@@ -24,9 +24,15 @@ limitations under the License.
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
 #include "proto/gen/ax25.pb.h"
+
+#include <google/protobuf/text_format.h>
 #include <grpcpp/grpcpp.h>
+
 #include <unistd.h>
 #include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 #include <string>
 
 namespace ax25 {
@@ -40,27 +46,50 @@ namespace {
     exit(err);
 }
 
+void print_packet(const ax25::Packet& packet)
+{
+    std::string str;
+    google::protobuf::TextFormat::PrintToString(packet, &str);
+    std::cout << str << "-----------------------------------------------------\n";
+}
+
+[[maybe_unused]] void print_packet_lite(const ax25::Packet& packet)
+{
+    std::cout << "  src: " << packet.src() << "\n"
+              << "  dst: " << packet.dst() << "\n";
+    for (const auto& digi : packet.repeater()) {
+        std::cout << "  repeater: " << digi.address()
+                  << (digi.has_been_repeated() ? "*" : "") << "\n";
+    }
+    const auto [me, status] = mic_e::parse(packet);
+    if (status.ok()) {
+        std::cout << "  mic-e message: " << me.status() << "\n";
+    }
+}
+
+std::string str2hex(std::string_view data)
+{
+    std::stringstream ss;
+    for (auto ch : data) {
+        ss << std::hex << std::setw(2) << std::setfill('0')
+           << (static_cast<unsigned int>(ch) & 0xff) << " ";
+    }
+    return ss.str();
+}
+
 void run(grpc::ClientReader<ax25ms::Frame>* reader)
 {
     ax25ms::Frame frame;
     while (reader->Read(&frame)) {
         auto& payload = frame.payload();
-        std::clog << "Got frame size " << payload.size() << ": " << payload << "\n";
+        std::clog << "Got frame size " << payload.size() << ": " << str2hex(payload)
+                  << "\n";
 
         auto [packet, status] = ax25::parse(frame.payload());
         if (!status.ok()) {
             std::cerr << "Failed to parse packet: " << status.error_message() << "\n";
         } else {
-            std::cout << "  src: " << packet.src() << "\n"
-                      << "  dst: " << packet.dst() << "\n";
-            for (const auto& digi : packet.repeater()) {
-                std::cout << "  repeater: " << digi.address()
-                          << (digi.has_been_repeated() ? "*" : "") << "\n";
-            }
-            const auto [me, status] = mic_e::parse(packet);
-            if (status.ok()) {
-                std::cout << "  mic-e message: " << me.status() << "\n";
-            }
+            print_packet(packet);
         }
 
         std::ofstream fo("captured/" + std::to_string(time(nullptr)));
