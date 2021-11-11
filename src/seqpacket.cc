@@ -429,8 +429,8 @@ public:
         connections_[{ src, dst }] = std::move(conu);
         const auto status = con.connect(ctx);
         if (!status.ok()) {
-            std::clog << "Connection timed out\n";
-            return grpc::Status::CANCELLED;
+            std::clog << "Connection timed out, returning error on stream\n";
+            return grpc::Status(grpc::CANCELLED, "connection timed out");
         }
         std::clog << "Connection established!\n";
         con.write("id");
