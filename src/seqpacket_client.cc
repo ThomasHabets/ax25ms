@@ -95,9 +95,9 @@ int main(int argc, char** argv)
         // Data.
     }
     const auto st = stream->Finish();
-    if (st.ok()) {
+    if (!st.ok()) {
         std::cerr << "Streaming failed: " << st.error_message() << "\n";
         return 1;
     }
-    std::cerr << "Exit success\n";
+    std::cerr << "Stream exit success\n";
 }
