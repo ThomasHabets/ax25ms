@@ -60,23 +60,13 @@ namespace {
     }
 }
 
-std::string str2hex(std::string_view data)
-{
-    std::stringstream ss;
-    for (auto ch : data) {
-        ss << std::hex << std::setw(2) << std::setfill('0')
-           << (static_cast<unsigned int>(ch) & 0xff) << " ";
-    }
-    return ss.str();
-}
-
 void run(grpc::ClientReader<ax25ms::Frame>* reader)
 {
     ax25ms::Frame frame;
     while (reader->Read(&frame)) {
         auto& payload = frame.payload();
-        std::clog << "Got frame size " << payload.size() << ": " << str2hex(payload)
-                  << "\n";
+        std::clog << "Got frame size " << payload.size() << ": "
+                  << ax25ms::str2hex(payload) << "\n";
 
         auto [packet, status] = ax25::parse(frame.payload());
         if (!status.ok()) {

@@ -41,12 +41,16 @@ constexpr auto immediately = std::chrono::milliseconds{ 0 };
 // Defaults.
 
 // 3000 according to 6.3.2. 10s in Linux.
+// How long to wait before retransmitting an unacked frame.
 constexpr Timer::duration_t default_t1 = std::chrono::milliseconds{ 3000 };
 
 // Linux: 3s.
+// The minimum amount of time to wait for another frame to be
+// received before transmitting an acknowledgement.
 constexpr Timer::duration_t default_t2 = std::chrono::seconds{ 3 };
 
 // Linux: 300s.
+// The period of time we wait between sending a check that the link is still active.
 constexpr Timer::duration_t default_t3 = std::chrono::seconds{ 300 };
 
 // Linux: 20m.
@@ -132,7 +136,9 @@ public:
                 // TODO: shouldn't this queue be sorted, so break?
                 continue;
             }
-            e.packet.mutable_iframe()->set_nr(nr_);
+            if (e.packet.has_iframe()) {
+                e.packet.mutable_iframe()->set_nr(nrm());
+            }
             e.packet.set_command_response(true);
             e.packet.set_rr_extseq(modulus_ == extended_modulus);
             const auto data = ax25::serialize(e.packet);
@@ -262,7 +268,7 @@ public:
 
     void disc(const ax25::Packet& packet) { std::clog << "disc\n"; }
 
-    void receive(const ax25::Packet& packet)
+    void process_acks(const ax25::Packet& packet)
     {
         // Remove acked packets from send queue.
         {
@@ -301,19 +307,83 @@ private:
 
     const int modulus_ = normal_modulus;
     int window_size_ = 4; // TODO: what to default to?
-    int nr_ = 0;          // expected next packet.
-    int ns_ = 0;
+    int64_t nr_ = 0;      // expected next packet.
+    int64_t nr_sent_ = 0; // Last nc that was sent.
+    int64_t ns_ = 0;      // next sequence number to send.
+
+    // call with lock held.
+    int nrm() const noexcept { return nr_ % modulus_; }
+    int nsm() const noexcept { return ns_ % modulus_; }
+
     ax25ms::SeqMetadata metadata_;
+
+    grpc::Status send_rr(std::string_view dst, std::string_view src, int n)
+    {
+        ax25::Packet ack;
+        ack.set_src(src.data(), src.size());
+        ack.set_dst(dst.data(), dst.size());
+        ack.mutable_rr()->set_nr(n);
+        ack.mutable_rr()->set_poll(true);
+        const auto data = ax25::serialize(ack);
+        ax25ms::SendRequest sreq;
+        sreq.mutable_frame()->set_payload(data);
+        ax25ms::SendResponse resp;
+        grpc::ClientContext ctx;
+        return router_->Send(&ctx, sreq, &resp);
+    }
 };
 
 void Connection::iframe(const ax25::Packet& packet)
 {
     std::clog << "iframe received: " << packet.iframe().payload() << "\n";
-    receive(packet);
+    process_acks(packet);
 
-    std::unique_lock<std::mutex> lk(receive_mu_);
-    receive_queue_.push_back(packet.iframe().payload());
-    receive_cv_.notify_one();
+    std::unique_lock<std::mutex> lk(mu_);
+
+    // If packet is out of order, drop it. TODO: selective.
+    if (nrm() != packet.iframe().ns()) {
+        std::cerr << "Got packet out of order: got " << packet.iframe().ns() << "want "
+                  << nrm() << "\n";
+        // Enqueue RR packet.
+        const auto st = send_rr(packet.src(), packet.dst(), nrm());
+        if (!st.ok()) {
+            std::cerr << "Failed to send RR\n";
+        }
+        return;
+    }
+    nr_++;
+
+    // Put in the receive queue.
+    {
+        std::unique_lock<std::mutex> lk(receive_mu_);
+        receive_queue_.push_back(packet.iframe().payload());
+        receive_cv_.notify_one();
+    }
+
+    // Schedule an ACK.
+    scheduler_->add(
+        default_t2,
+        [this, src = packet.src(), dst = packet.dst(), n = packet.iframe().ns()] {
+            {
+                std::unique_lock<std::mutex> lk(send_mu_);
+                if (!send_queue_.empty()) {
+                    // If packets are scheduled then
+                    // they'll take care of it.
+                    return;
+                }
+            }
+            // If implicit ACK already sent, then never mind.
+            std::unique_lock<std::mutex> lk(mu_);
+            if (nr_sent_ >= nr_) {
+                return;
+            }
+
+            // Send RR packet.
+            const auto st = send_rr(src, dst, nrm());
+            if (!st.ok()) {
+                std::cerr << "Failed to send RR\n";
+            }
+        });
 }
 
 
@@ -327,8 +397,8 @@ grpc::Status Connection::write(std::string_view payload)
     iframe->set_payload("\xF0" + std::string(payload));
 
     std::unique_lock<std::mutex> lk(send_mu_);
-    packet.mutable_iframe()->set_ns(ns_++);
-    ns_ = (ns_ + 1) % modulus_;
+    packet.mutable_iframe()->set_ns(nsm());
+    ns_++;
     send_queue_.push_back(Entry{
         .packet = std::move(packet),
         .next_tx = std::chrono::steady_clock::now(),

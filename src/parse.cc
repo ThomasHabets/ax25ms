@@ -18,6 +18,8 @@ limitations under the License.
  * Main specs: http://www.tapr.org/pdf/AX25.2.2.pdf
  */
 // org/info/freqspec.txt
+#include "util.h"
+
 #include "proto/gen/ax25.pb.h"
 
 #include <grpcpp/grpcpp.h>
@@ -192,8 +194,9 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
         s->set_nr((control >> 5) & 7);
         s->set_ns((control >> 1) & 7);
         s->set_poll(control & 0b00010000);
-        if (!data.substr(pos).empty()) {
-            std::clog << "S Frame with data?!?\n";
+        const auto rest = data.substr(pos);
+        if (!rest.empty()) {
+            std::clog << "S Frame with data? I see " << ax25ms::str2hex(data) << "\n";
         }
         return { ret, grpc::Status::OK };
     }

@@ -70,7 +70,6 @@ message Packet {
   }
   message SFrame {
     int32 nr = 1;
-    int32 ns = 2;
     bool poll = 3;
   }
   message IFrame {

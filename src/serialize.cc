@@ -111,6 +111,12 @@ std::string serialize(const ax25::Packet& packet)
     if (packet.has_ua()) {
         ret.push_back(0b011'0'00'11);
     }
+    if (packet.has_rr()) {
+        uint8_t control = 0b000'0'00'01;
+        control |= (packet.rr().nr() << 5) & 0b111'0'00'00;
+        ;
+        ret.push_back(control);
+    }
 
     // I frames.
     if (packet.has_iframe()) {

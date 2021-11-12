@@ -13,22 +13,22 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#include "proto/gen/ax25.pb.h"
+#include "util.h"
+
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 #include <string>
-
-#include <google/protobuf/text_format.h>
-
 namespace ax25ms {
 
-template <typename T>
-std::string proto2string(const T& proto)
+std::string str2hex(std::string_view data)
 {
-    std::string str;
-    google::protobuf::TextFormat::PrintToString(proto, &str);
-    return str;
+    std::stringstream ss;
+    for (auto ch : data) {
+        ss << std::hex << std::setw(2) << std::setfill('0')
+           << (static_cast<unsigned int>(ch) & 0xff) << " ";
+    }
+    return ss.str();
 }
-
-std::string str2hex(std::string_view data);
-
 
 } // namespace ax25ms

@@ -8,6 +8,7 @@ listen_SOURCES=\
 src/listen.cc \
 src/parse.cc \
 src/mic-e.cc \
+src/util.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \
@@ -18,6 +19,7 @@ src/decode.cc \
 src/parse.cc \
 src/mic-e.cc \
 src/aprs.cc \
+src/util.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \
@@ -25,6 +27,7 @@ proto/gen/api.pb.cc
 
 serial_SOURCES=\
 src/serial.cc \
+src/util.cc \
 proto/gen/api.grpc.pb.cc \
 proto/gen/api.pb.cc
 
@@ -33,6 +36,7 @@ src/seqpacket.cc \
 src/serialize.cc \
 src/parse.cc \
 src/scheduler.cc \
+src/util.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \
@@ -40,6 +44,7 @@ proto/gen/api.pb.cc
 
 seqpacket_client_SOURCES=\
 src/seqpacket_client.cc \
+src/util.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \
