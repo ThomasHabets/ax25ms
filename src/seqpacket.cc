@@ -104,10 +104,16 @@ public:
         Timer::time_point_t next_tx;
     };
 
-    std::mutex send_mu_;
-    std::deque<Entry> send_queue_;
-
     grpc::Status write(std::string_view payload);
+
+    std::pair<std::string, grpc::Status> read()
+    {
+        std::unique_lock<std::mutex> lk(receive_mu_);
+        receive_cv_.wait(lk, [this] { return !receive_queue_.empty(); });
+        const auto payload = receive_queue_.front();
+        receive_queue_.pop_front();
+        return { payload, grpc::Status::OK };
+    }
 
     /*
      * A packet has been added, or a timer has expired.
@@ -123,6 +129,7 @@ public:
                 break;
             }
             if (std::chrono::steady_clock::now() < e.next_tx) {
+                // TODO: shouldn't this queue be sorted, so break?
                 continue;
             }
             e.packet.mutable_iframe()->set_nr(nr_);
@@ -251,11 +258,11 @@ public:
         // TODO: what about other states?
     }
 
-    void iframe(const ax25::Packet& packet) { std::clog << "iframe\n"; }
+    void iframe(const ax25::Packet& packet);
 
     void disc(const ax25::Packet& packet) { std::clog << "disc\n"; }
 
-    void receive(ax25::Packet& packet)
+    void receive(const ax25::Packet& packet)
     {
         // Remove acked packets from send queue.
         {
@@ -269,7 +276,6 @@ public:
                 send_queue_.pop_front();
             }
         }
-        // TODO: schedule a RR.
     }
 
 private:
@@ -278,6 +284,13 @@ private:
     Timer* scheduler_;
     std::string mycall_;
     std::string peer_;
+
+    std::mutex send_mu_;
+    std::deque<Entry> send_queue_;
+
+    std::mutex receive_mu_;
+    std::condition_variable receive_cv_;
+    std::deque<std::string> receive_queue_;
 
     std::mutex mu_;
     std::condition_variable state_cv_; // Trigger when state changes.
@@ -288,10 +301,21 @@ private:
 
     const int modulus_ = normal_modulus;
     int window_size_ = 4; // TODO: what to default to?
-    int nr_ = 0;
+    int nr_ = 0;          // expected next packet.
     int ns_ = 0;
     ax25ms::SeqMetadata metadata_;
 };
+
+void Connection::iframe(const ax25::Packet& packet)
+{
+    std::clog << "iframe received: " << packet.iframe().payload() << "\n";
+    receive(packet);
+
+    std::unique_lock<std::mutex> lk(receive_mu_);
+    receive_queue_.push_back(packet.iframe().payload());
+    receive_cv_.notify_one();
+}
+
 
 grpc::Status Connection::write(std::string_view payload)
 {
@@ -393,9 +417,23 @@ public:
             return grpc::Status(grpc::CANCELLED, "connection timed out");
         }
         std::clog << "Connection established!\n";
-        con.write("id");
+        std::jthread receive_thread([&con, stream] {
+            for (;;) {
+                auto [payload, st] = con.read();
+                if (!st.ok()) {
+                    return;
+                }
+                std::clog << "SENDING ON STREAM: " << payload << "\n";
+                ax25ms::SeqConnectResponse data;
+                data.mutable_packet()->set_payload(payload);
+                if (!stream->Write(data)) {
+                    std::cerr << "Failed to write to stream\n";
+                    return;
+                }
+            }
+        });
         while (stream->Read(&req)) {
-            std::clog << "client sent something!\n";
+            con.write(req.packet().payload());
         }
         std::clog << "Connection ended\n";
         return con.disconnect();

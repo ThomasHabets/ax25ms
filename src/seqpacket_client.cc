@@ -83,15 +83,28 @@ int main(int argc, char** argv)
         return 1;
     }
     bool connected = false;
+
+    // Send command.
+    {
+        grpc::ClientContext ctx;
+        ax25ms::SeqConnectRequest req;
+        req.mutable_packet()->set_payload("id");
+        if (!stream->Write(req)) {
+            std::cerr << "Failed to write command\n";
+            exit(1);
+        }
+    }
+
     while (stream->Read(&resp)) {
         // First frame.
         if (!connected) {
             // TODO: check connected.
             connected = true;
             std::clog << "Connected!\n";
-            continue;
         }
-        // Data.
+        if (resp.has_packet()) {
+            std::cout << "Got data: " << resp.packet().payload() << "\n";
+        }
     }
     const auto st = stream->Finish();
     if (!st.ok()) {
