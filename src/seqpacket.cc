@@ -42,7 +42,7 @@ constexpr auto immediately = std::chrono::milliseconds{ 0 };
 
 // 3000 according to 6.3.2. 10s in Linux.
 // How long to wait before retransmitting an unacked frame.
-constexpr Timer::duration_t default_t1 = std::chrono::milliseconds{ 3000 };
+constexpr Timer::duration_t default_t1 = std::chrono::milliseconds{ 5000 };
 
 // Linux: 3s.
 // The minimum amount of time to wait for another frame to be
@@ -136,6 +136,7 @@ public:
                 // TODO: shouldn't this queue be sorted, so break?
                 continue;
             }
+            std::unique_lock<std::mutex> lk(mu_);
             if (e.packet.has_iframe()) {
                 e.packet.mutable_iframe()->set_nr(nrm());
             }
@@ -145,7 +146,6 @@ public:
 
             ax25ms::SendRequest sreq;
             sreq.mutable_frame()->set_payload(data);
-            std::unique_lock<std::mutex> lk(mu_);
             ax25ms::SendResponse resp;
             grpc::ClientContext ctx;
             const auto status = router_->Send(&ctx, sreq, &resp);
@@ -154,6 +154,7 @@ public:
                 change_state(State::CONNECTED, State::IDLE);
                 send_queue_.clear();
             } else {
+                nr_sent_ = nr_;
                 e.next_tx = std::chrono::steady_clock::now() + default_t1;
             }
         }
@@ -382,6 +383,8 @@ void Connection::iframe(const ax25::Packet& packet)
             const auto st = send_rr(src, dst, nrm());
             if (!st.ok()) {
                 std::cerr << "Failed to send RR\n";
+            } else {
+                nr_sent_ = nr_;
             }
         });
 }
