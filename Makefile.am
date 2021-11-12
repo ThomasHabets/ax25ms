@@ -47,4 +47,4 @@ proto/gen/api.pb.cc
 
 
 lsp:
-	~/.local/bin/intercept-build make
+	~/.local/bin/intercept-build make -j$(shell nproc)
