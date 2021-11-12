@@ -22,6 +22,7 @@ limitations under the License.
 #include "aprs.h"
 #include "mic-e.h"
 #include "parse.h"
+#include "util.h"
 
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include <sstream>
 #include <string>
 
-#include <google/protobuf/text_format.h>
 
 namespace {
 
@@ -96,9 +96,8 @@ std::string stringify(const ax25::Packet& packet)
     std::stringstream ss;
 
     if (true) {
-        std::string str;
-        google::protobuf::TextFormat::PrintToString(packet, &str);
-        return str + "-----------------------------------------------------\n";
+        return ax25ms::proto2string(packet) +
+               "-----------------------------------------------------\n";
     }
 
     ss << "AX25\n"

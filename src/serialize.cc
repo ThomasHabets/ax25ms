@@ -28,8 +28,6 @@ limitations under the License.
 #include <sstream>
 #include <string>
 
-#include <google/protobuf/text_format.h>
-
 namespace ax25 {
 
 namespace {

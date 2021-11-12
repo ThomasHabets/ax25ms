@@ -17,6 +17,7 @@ limitations under the License.
 #include "parse.h"
 #include "scheduler.h"
 #include "serialize.h"
+#include "util.h"
 
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
@@ -32,19 +33,7 @@ limitations under the License.
 #include <vector>
 
 // Third party.
-#include <google/protobuf/text_format.h>
 #include <grpcpp/grpcpp.h>
-
-namespace {
-
-[[maybe_unused]] void print_packet(const ax25::Packet& packet)
-{
-    std::string str;
-    google::protobuf::TextFormat::PrintToString(packet, &str);
-    std::cout << str << "-----------------------------------------------------\n";
-}
-
-} // namespace
 
 namespace ax25ms {
 
@@ -83,15 +72,6 @@ constexpr int default_n2 = 3;
 // int retries = 10;
 // Although see https://tldp.org/HOWTO/AX25-HOWTO/x235.html, where linux defaults
 // to: T1: 10s t2: 3s t3: 300s window: 2
-
-namespace {
-std::string proto2string(const google::protobuf::Message& msg)
-{
-    std::string str;
-    google::protobuf::TextFormat::PrintToString(msg, &str);
-    return str;
-}
-} // namespace
 
 class Connection
 {
@@ -362,7 +342,7 @@ public:
         } else {
             // Not a seqpacket-related frame.
             std::cerr << "Not a seqpacket-related frame:\n"
-                      << proto2string(packet) << "\n";
+                      << ax25ms::proto2string(packet) << "\n";
             return;
         }
         std::cerr << "Got seqpacket frame of size " << frame.payload().size() << "\n";
@@ -491,9 +471,7 @@ int main(int argc, char** argv)
 
 
         auto parsed = ax25::parse(data);
-        std::string str;
-        google::protobuf::TextFormat::PrintToString(packet, &str);
-        std::cout << str;
+        std::cout << ax25ms::proto2string(packet);
 
         ax25ms::SendRequest req;
         req.mutable_frame()->set_payload(data);

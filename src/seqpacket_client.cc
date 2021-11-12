@@ -19,7 +19,6 @@ limitations under the License.
 #include "proto/gen/ax25.grpc.pb.h"
 #include "proto/gen/ax25.pb.h"
 
-#include <google/protobuf/text_format.h>
 #include <grpcpp/grpcpp.h>
 
 #include <unistd.h>

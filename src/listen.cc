@@ -20,12 +20,12 @@ limitations under the License.
  * Service. This includes the serial port tool.
  */
 #include "mic-e.h"
+#include "util.h"
 
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
 #include "proto/gen/ax25.pb.h"
 
-#include <google/protobuf/text_format.h>
 #include <grpcpp/grpcpp.h>
 
 #include <unistd.h>
@@ -44,13 +44,6 @@ namespace {
 {
     std::cout << av0 << ": Usage [ -h ] -r <router host:port>\n";
     exit(err);
-}
-
-void print_packet(const ax25::Packet& packet)
-{
-    std::string str;
-    google::protobuf::TextFormat::PrintToString(packet, &str);
-    std::cout << str << "-----------------------------------------------------\n";
 }
 
 [[maybe_unused]] void print_packet_lite(const ax25::Packet& packet)
@@ -89,7 +82,8 @@ void run(grpc::ClientReader<ax25ms::Frame>* reader)
         if (!status.ok()) {
             std::cerr << "Failed to parse packet: " << status.error_message() << "\n";
         } else {
-            print_packet(packet);
+            std::cout << ax25ms::proto2string(packet)
+                      << "-----------------------------------------------------\n";
         }
 
         std::ofstream fo("captured/" + std::to_string(time(nullptr)));
