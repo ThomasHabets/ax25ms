@@ -146,7 +146,7 @@ public:
                         case 0x00: // Data
                             if (current.size() > 1) {
                                 ax25ms::Frame frame{};
-                                frame.set_payload(current.data() + 1, current.size());
+                                frame.set_payload(current.data() + 1, current.size() - 1);
                                 inject(frame);
                             }
                             break;
