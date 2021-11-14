@@ -192,7 +192,6 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
             throw std::logic_error("can't happen");
         }
         s->set_nr((control >> 5) & 7);
-        s->set_ns((control >> 1) & 7);
         s->set_poll(control & 0b00010000);
         const auto rest = data.substr(pos);
         if (!rest.empty()) {
