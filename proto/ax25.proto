@@ -30,6 +30,7 @@ message Packet {
   string dst = 1;
   string src = 2;
   repeated Repeater repeater = 3;
+  int32 fcs = 4; // 4.4.6. I've not seen this used, though.
 
   message SABME {
     bool poll = 1;
@@ -61,35 +62,29 @@ message Packet {
     int32 push = 2;
     bytes payload = 3;
   }
-  message UFrame {
-    // 8bit
-    // 3 modifier bits // 4.2.1.3
-    // Poll/Final
-    // 2 M bits
+  message IFrame {
+    // 3 N(R)
+    int32 nr = 1; // 3 or 7 bits.
+    int32 ns = 2; // 3 or 7 bits.
 
+    bool poll = 3;
+
+    // Linux signals extended modulus using a reserved bit.
+    bool extended = 4;
+
+    int32 pid = 5; // 3.4. Protocol number. E.g. F0 for "No L3 data"
+
+    bytes payload = 6;
   }
+
   message SFrame {
     int32 nr = 1;
     bool poll = 3;
   }
-  message IFrame {
-    // 3 N(R)
-    int32 nr = 1; // 3 or 7 bits.
-    bool poll = 2;
-    int32 ns = 3; // 3 or 7 bits.
+  // Reserved proto range: 5-10.
 
-
-    bytes payload = 4;
-
-    bool extended = 5;
-
-    // TODO: renumber proto.
-    int32 pid = 6; // 3.4
-
-    // TODO: what about 0xFF escape pid character?
-  }
   oneof frame_type {
-    // U Frames.
+    // U Frames. Order is the same as in section 4.3.3.
     SABME sabme = 11;
     SABM sabm = 12;
     DISC disc = 13;
@@ -100,24 +95,28 @@ message Packet {
     XID xid = 18;
     TEST test = 19;
 
+    // I frames.
     IFrame iframe = 20;
-    SFrame rr = 22;
-    SFrame rnr = 23;
-    SFrame rej = 24;
-    SFrame srej = 25;
+
+    // S frames. Order same as in 4.3.2.
+    SFrame rr = 21;
+    SFrame rnr = 22;
+    SFrame rej = 23;
+    SFrame srej = 24;
   }
 
-  aprs.Packet aprs = 21;
+  // Extra fields.
+  bool rr_extseq = 31; // rr1 bit in src.
+  bool command_response = 32; // Top bit in dst. 3.12.2.
+  bool command_response_la = 33; // Top bit in src. 3.12.3.
+  bool rr_dst1 = 34; // rr1 bit in dst.
 
-  int32 fcs = 6; // 4.4.6
-  // 8/16 control
-  // N*8 bits info
-  // 16 bit FCS
-
-  bool rr_extseq = 26; // rr1 bit in src.
-  bool command_response = 27; // Top bit in dst. 3.12.2.
-  bool command_response_la = 28; // Top bit in src. 3.12.3.
-  bool rr_dst1 = 29; // rr1 bit in dst.
+  // Extra information decoded about higher level protocols.
+  // This data is in addition to whatever frame carried it.
+  //
+  // E.g. `aprs` will be filled out if it's an IFrame, and
+  // it decodes correctly as APRS.
+  aprs.Packet aprs = 41;
 }
 
 message ParseRequest {

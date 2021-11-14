@@ -32,24 +32,21 @@ message Packet {
     string symbol = 4;
   }
   Position position = 1;
-
-  Telemetry telemetry = 5;
-  string status = 6;
+  Telemetry telemetry = 2;
+  string status = 3;
 
   message MicE {
     string msg = 1;
     bool position_current = 2;
   }
-
-
-  MicE mic_e = 8;
+  MicE mic_e = 4;
 
   message Msg {
     string dst = 1;
     string msg = 2;
     string msg_number = 3;
   }
-  Msg msg = 9;
+  Msg msg = 5;
 
   message Time {
     int32 day = 1;
@@ -60,7 +57,7 @@ message Packet {
     Time time = 1;
     string status_report = 2;
   }
-  StatusReport status_report = 10;
+  StatusReport status_report = 6;
 
   message Object {
     string name = 1;
@@ -69,9 +66,9 @@ message Packet {
     Position position = 4;
     string comment = 5;
   }
-  Object object = 11;
+  Object object = 7;
 
   message Course {
   }
-  Course course = 12;
+  Course course = 8;
 }
