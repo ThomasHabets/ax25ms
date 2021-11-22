@@ -618,6 +618,8 @@ int main(int argc, char** argv)
             std::cerr << "Stream ended with error\n";
         }
         std::cerr << "Stream ended. Looping\n";
+
+        std::this_thread::sleep_for(std::chrono::milliseconds{ 100 });
     }
     // server->Wait();
 }
