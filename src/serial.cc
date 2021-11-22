@@ -77,7 +77,7 @@ public:
 
     void read_main()
     {
-        std::vector<char> buf;
+        std::vector<uint8_t> buf;
         enum class KISSState {
             UNKNOWN,
             READING,
@@ -89,7 +89,7 @@ public:
         KISSState state = KISSState::UNKNOWN;
         std::vector<char> current;
         for (;;) {
-            std::vector<char>::iterator fend;
+            std::vector<uint8_t>::iterator fend;
             for (;;) {
                 fend = std::find(buf.begin(), buf.end(), FEND);
                 if (fend != buf.end()) {
@@ -106,14 +106,6 @@ public:
                 if (buf.empty()) {
                     continue;
                 }
-            }
-
-            if (false) {
-                std::clog << "KISS stream has FESC:\n";
-                for (const auto ch : buf) {
-                    std::clog << std::hex << static_cast<unsigned int>(ch) << " ";
-                }
-                std::clog << "\n";
             }
 
             // If unsynced, clear until first FEND.
@@ -308,6 +300,6 @@ int main(int argc, char** argv)
     builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
-
+    std::clog << "Running…\n";
     server->Wait();
 }
