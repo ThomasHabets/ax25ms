@@ -48,6 +48,7 @@ typedef int (*bind_func_t)(int, const struct sockaddr*, socklen_t);
 typedef int (*connect_func_t)(int, const struct sockaddr*, socklen_t);
 typedef int (*getsockopt_func_t)(int, int, int, void*, socklen_t*);
 typedef int (*setsockopt_func_t)(int, int, int, const void*, socklen_t);
+typedef int (*close_func_t)(int);
 
 static socket_func_t orig_socket = nullptr;
 static read_func_t orig_read = nullptr;
@@ -56,6 +57,7 @@ static bind_func_t orig_bind = nullptr;
 static connect_func_t orig_connect = nullptr;
 static getsockopt_func_t orig_getsockopt = nullptr;
 static setsockopt_func_t orig_setsockopt = nullptr;
+static close_func_t orig_close = nullptr;
 
 const char* log_prefix = "preload: ";
 
@@ -81,7 +83,7 @@ public:
     ~DummyFD()
     {
         if (fd_ >= 0) {
-            ::close(fd_);
+            orig_close(fd_);
             fd_ = -1;
         }
     }
@@ -118,7 +120,17 @@ private:
     std::string src_;
 };
 
-std::map<int, Connection> connections;
+std::mutex mu;
+std::map<int, std::unique_ptr<Connection>> connections;
+Connection* get_connection(int fd)
+{
+    std::unique_lock<std::mutex> lk(mu);
+    auto itr = connections.find(fd);
+    if (itr == connections.end()) {
+        return nullptr;
+    }
+    return itr->second.get();
+}
 
 __attribute__((constructor)) void init()
 {
@@ -130,6 +142,7 @@ __attribute__((constructor)) void init()
     orig_connect = reinterpret_cast<connect_func_t>(dlsym(RTLD_NEXT, "connect"));
     orig_getsockopt = reinterpret_cast<getsockopt_func_t>(dlsym(RTLD_NEXT, "getsockopt"));
     orig_setsockopt = reinterpret_cast<setsockopt_func_t>(dlsym(RTLD_NEXT, "setsockopt"));
+    orig_close = reinterpret_cast<close_func_t>(dlsym(RTLD_NEXT, "close"));
 
     if (auto e = getenv("AX25_ADDR"); e == nullptr) {
         fprintf(stderr, "%sError: AX25_ADDR not set. Setting 'INVALID'\n", log_prefix);
@@ -156,7 +169,7 @@ int make_fd()
     if (-1 == pipe(fd)) {
         throw std::runtime_error(std::string("pipe(): ") + strerror(errno));
     }
-    close(fd[1]);
+    orig_close(fd[1]);
     return fd[0];
 }
 
@@ -285,75 +298,88 @@ int socket(int domain, int type, int protocol)
         return orig_socket(domain, type, protocol);
     }
     log() << "socket(AF_AX25)\n";
+    std::unique_lock<std::mutex> lk(mu);
     auto con = Connection(type, protocol);
     const auto fd = con.fd();
-    connections.insert({ fd, std::move(con) });
+    connections.insert({ fd, std::make_unique<Connection>(std::move(con)) });
     return fd;
+}
+
+int close(int fd)
+{
+    if (!get_connection(fd)) {
+        assert(orig_close);
+        return orig_close(fd);
+    }
+    log() << "close(AF_AX25)\n";
+    std::unique_lock<std::mutex> lk(mu);
+    connections.erase(fd);
+    return 0;
 }
 
 int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)
 {
-    auto con = connections.find(fd);
-    if (con == connections.end()) {
+    auto con = get_connection(fd);
+    if (!con) {
         assert(orig_bind);
         return orig_bind(fd, addr, addrlen);
     }
     log() << "bind(AF_AX25)\n";
-    return con->second.bind(addr, addrlen);
+    return con->bind(addr, addrlen);
 }
 
 int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
 {
-    auto con = connections.find(fd);
-    if (con == connections.end()) {
+    auto con = get_connection(fd);
+    if (!con) {
         assert(orig_connect);
         return orig_connect(fd, addr, addrlen);
     }
     log() << "connect(AF_AX25)\n";
-    return con->second.connect(addr, addrlen);
+    return con->connect(addr, addrlen);
 }
 
 ssize_t read(int fd, void* buf, size_t count)
 {
-    auto con = connections.find(fd);
-    if (con == connections.end()) {
+    auto con = get_connection(fd);
+    if (!con) {
         assert(orig_read);
         return orig_read(fd, buf, count);
     }
     log() << "read(AF_AX25)\n";
-    return con->second.read(buf, count);
+    return con->read(buf, count);
 }
 
 ssize_t write(int fd, const void* buf, size_t count)
 {
-    auto con = connections.find(fd);
-    if (con == connections.end()) {
+    auto con = get_connection(fd);
+    if (!con) {
         assert(orig_write);
         return orig_write(fd, buf, count);
     }
     log() << "write(AF_AX25)\n";
-    return con->second.write(buf, count);
+    return con->write(buf, count);
 }
 
 int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
 {
-    auto con = connections.find(fd);
-    if (con == connections.end()) {
+    auto con = get_connection(fd);
+    if (!con) {
         assert(orig_getsockopt);
         return orig_getsockopt(fd, level, optname, optval, optlen);
     }
     log() << "getsockopt(AF_AX25)\n";
-    return con->second.getsockopt(level, optname, optval, optlen);
+    return con->getsockopt(level, optname, optval, optlen);
 }
 
 int setsockopt(int fd, int level, int optname, const void* optval, socklen_t optlen)
 {
-    auto con = connections.find(fd);
-    if (con == connections.end()) {
+    auto con = get_connection(fd);
+    if (!con) {
         assert(orig_setsockopt);
         return orig_setsockopt(fd, level, optname, optval, optlen);
     }
     log() << "setsockopt(AF_AX25)\n";
-    return con->second.setsockopt(level, optname, optval, optlen);
+    return con->setsockopt(level, optname, optval, optlen);
 }
 } // extern "C"
