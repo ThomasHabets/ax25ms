@@ -22,6 +22,7 @@ limitations under the License.
 #include <grpcpp/grpcpp.h>
 
 #include <unistd.h>
+#include <thread>
 
 namespace {
 [[noreturn]] void usage(const char* av0, int err)
@@ -71,6 +72,7 @@ int main(int argc, char** argv)
     auto channel = grpc::CreateChannel(router, grpc::InsecureChannelCredentials());
     auto seq = ax25ms::SeqPacketService::NewStub(channel);
 
+    std::clog << "Connecting…\n";
     grpc::ClientContext ctx;
     ax25ms::SeqConnectRequest req;
     req.mutable_packet()->mutable_metadata()->mutable_source_address()->set_address(src);
@@ -85,15 +87,23 @@ int main(int argc, char** argv)
     bool connected = false;
 
     // Send command.
-    {
-        grpc::ClientContext ctx;
-        ax25ms::SeqConnectRequest req;
-        req.mutable_packet()->set_payload("id");
-        if (!stream->Write(req)) {
-            std::cerr << "Failed to write command\n";
-            exit(1);
+    std::jthread th([&stream] {
+        for (;;) {
+            std::string cmd;
+            std::getline(std::cin, cmd);
+            if (cmd.empty()) {
+                return;
+            }
+
+            grpc::ClientContext ctx;
+            ax25ms::SeqConnectRequest req;
+            req.mutable_packet()->set_payload(cmd);
+            if (!stream->Write(req)) {
+                std::cerr << "Failed to write command\n";
+                exit(1);
+            }
         }
-    }
+    });
 
     while (stream->Read(&resp)) {
         // First frame.
