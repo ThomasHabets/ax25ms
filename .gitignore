@@ -25,3 +25,13 @@ stamp-h1
 ./seqpacket
 *.pcap
 
+*.la
+*.so
+.libs
+.cache
+compile_commands.json
+proto/gen/
+src/config.h
+*.lo
+libtool
+ltmain.sh
