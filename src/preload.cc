@@ -361,8 +361,13 @@ int close(int fd)
         return orig_close(fd);
     }
     log() << "close(AF_AX25)\n";
-    std::unique_lock<std::mutex> lk(mu);
-    connections.erase(fd);
+
+    // Fancy lambda to make sure we unlock before calling destructor,
+    // because destructor likely causes close().
+    [fd] {
+        std::unique_lock<std::mutex> lk(mu);
+        return connections.extract(fd);
+    }();
     return 0;
 }
 
