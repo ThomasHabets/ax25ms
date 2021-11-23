@@ -64,6 +64,16 @@ const char* log_prefix = "preload: ";
 char* radio_addr = nullptr;  // AX25_ADDR
 char* router_addr = nullptr; // AX25_ROUTER
 
+std::ostream& log()
+{
+    if (true) {
+        std::clog << log_prefix;
+        return std::clog;
+    }
+    static std::ofstream null("/dev/null");
+    return null;
+}
+
 class DummyFD
 {
 public:
@@ -100,9 +110,9 @@ public:
     Connection(int type, int protocol);
 
     Connection(const Connection&) = delete;
-    Connection(Connection&&) = default;
+    Connection(Connection&&) = delete;
     Connection& operator=(const Connection&) = delete;
-    Connection& operator=(Connection&&) = default;
+    Connection& operator=(Connection&&) = delete;
 
     int fd() const noexcept { return dummy_fd_.fd(); }
     ssize_t read(void* buf, size_t count);
@@ -116,6 +126,13 @@ private:
     DummyFD dummy_fd_;
     int type_;
     int protocol_;
+    bool extseq_ = false;
+    int paclen_ = 256; // TODO
+    grpc::ClientContext stream_ctx_;
+
+    std::unique_ptr<
+        grpc::ClientReaderWriter<ax25ms::SeqConnectRequest, ax25ms::SeqConnectResponse>>
+        stream_;
 
     std::string src_;
 };
@@ -194,8 +211,23 @@ Connection::Connection(int type, int protocol)
 
 ssize_t Connection::read(void* buf, size_t count)
 {
-    errno = ENOSYS;
-    return -1;
+    for (;;) {
+        ax25ms::SeqConnectResponse resp;
+        assert(stream_);
+        if (!stream_->Read(&resp)) {
+            log() << "stream ended\n";
+            // TODO: Finish() and stuff.
+            return 0;
+        }
+        if (!resp.has_packet()) {
+            continue;
+        }
+        const auto& payload = resp.packet().payload();
+        // TODO: don't truncate.
+        const auto size = std::min(count, payload.size());
+        memcpy(buf, payload.data(), size);
+        return size;
+    }
 }
 
 ssize_t Connection::write(const void* buf, size_t count)
@@ -206,7 +238,28 @@ ssize_t Connection::write(const void* buf, size_t count)
 
 int Connection::getsockopt(int level, int optname, void* optval, socklen_t* optlen)
 {
-    errno = ENOSYS;
+    if (level != SOL_AX25) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (*optlen < sizeof(int)) {
+        errno = EINVAL;
+        return -1;
+    }
+    switch (optname) {
+    case AX25_EXTSEQ: {
+        const int ex = extseq_ ? 1 : 0;
+        memcpy(optval, &ex, sizeof(int));
+        *optlen = sizeof(int);
+        return 0;
+    }
+    case AX25_PACLEN:
+        memcpy(optval, &paclen_, sizeof(int));
+        *optlen = sizeof(int);
+        return 0;
+    }
+
+    errno = EINVAL;
     return -1;
 }
 
@@ -251,28 +304,24 @@ int Connection::connect(const struct sockaddr* addr, socklen_t addrlen)
     const std::string dst = ax25_ntoa(&sa->fsa_ax25.sax25_call);
 
     // Send RPC.
-    grpc::ClientContext ctx;
     ax25ms::SeqConnectRequest req;
     req.mutable_packet()->mutable_metadata()->mutable_source_address()->set_address(src_);
     req.mutable_packet()->mutable_metadata()->mutable_address()->set_address(dst);
-    ax25ms::SeqConnectResponse resp;
-    auto stream = router()->Connect(&ctx);
-    if (!stream->Write(req)) {
-        std::clog << "Failed to start connect RPC: " << stream->Finish().error_message()
+    stream_ = router()->Connect(&stream_ctx_);
+    if (!stream_->Write(req)) {
+        std::clog << "Failed to start connect RPC: " << stream_->Finish().error_message()
                   << "\n";
         errno = ECOMM;
         return -1;
     }
-    return 0;
-}
 
-std::ostream& log()
-{
-    if (true) {
-        return std::clog;
+    // Wait for the connection metadata.
+    ax25ms::SeqConnectResponse resp;
+    if (!stream_->Read(&resp)) {
+        errno = ECONNREFUSED;
+        return -1;
     }
-    static std::ofstream null("/dev/null");
-    return null;
+    return 0;
 }
 
 } // namespace
@@ -299,9 +348,9 @@ int socket(int domain, int type, int protocol)
     }
     log() << "socket(AF_AX25)\n";
     std::unique_lock<std::mutex> lk(mu);
-    auto con = Connection(type, protocol);
-    const auto fd = con.fd();
-    connections.insert({ fd, std::make_unique<Connection>(std::move(con)) });
+    auto con = std::make_unique<Connection>(type, protocol);
+    const auto fd = con->fd();
+    connections.insert({ fd, std::move(con) });
     return fd;
 }
 
