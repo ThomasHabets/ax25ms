@@ -490,6 +490,18 @@ public:
             return grpc::Status(grpc::CANCELLED, "connection timed out");
         }
         std::clog << "Connection established!\n";
+
+        // Send connection metadata
+        {
+            ax25ms::SeqConnectResponse metadata;
+            if (!stream->Write(metadata)) {
+                std::cerr << "Failed to write to stream\n";
+                return grpc::Status(grpc::UNKNOWN,
+                                    "failed to inform client that we were successful");
+            }
+        }
+
+        // Start receiving.
         std::jthread receive_thread([&con, stream] {
             for (;;) {
                 auto [payload, st] = con.read();
