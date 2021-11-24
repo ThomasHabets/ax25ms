@@ -13,7 +13,7 @@ proto/gen/api.grpc.pb.cc \
 proto/gen/api.pb.cc
 libpreload_la_CPPFLAGS=-fPIC
 libpreload_la_CXXFLAGS=-fPIC
-libpreload_la_LDFLAGS=-shared -fPIC -Wl,-z,defs -Wl,--as-needed -ldl -lax25
+libpreload_la_LDFLAGS=-shared -fPIC -Wl,-z,defs -Wl,--as-needed -ldl -lax25 -lpthread
 
 listen_SOURCES=\
 src/listen.cc \

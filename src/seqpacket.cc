@@ -616,7 +616,7 @@ int main(int argc, char** argv)
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
     std::cout << "Server started" << std::endl;
 
-    // Start stream
+    // Start stream from router.
     for (;;) {
         grpc::ClientContext ctx;
         ax25ms::StreamRequest req;

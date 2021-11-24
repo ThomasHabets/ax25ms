@@ -33,10 +33,14 @@ limitations under the License.
 #include <netax25/axlib.h>
 
 // C++
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <mutex>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -74,33 +78,56 @@ std::ostream& log()
     return null;
 }
 
-class DummyFD
+class Pipe
 {
 public:
-    DummyFD(int fd) : fd_(fd) {}
+    Pipe(std::pair<int, int> fds) : fds_(fds) {}
 
     // No copy.
-    DummyFD(const DummyFD&) = delete;
-    DummyFD& operator=(const DummyFD&) = delete;
+    Pipe(const Pipe&) = delete;
+    Pipe& operator=(const Pipe&) = delete;
 
     // Move ok.
-    DummyFD(DummyFD&& rhs) { fd_ = std::exchange(rhs.fd_, -1); }
-    DummyFD& operator=(DummyFD&& rhs)
+    Pipe(Pipe&& rhs) { fds_ = std::exchange(rhs.fds_, { -1, -1 }); }
+    Pipe& operator=(Pipe&& rhs)
     {
-        fd_ = std::exchange(rhs.fd_, -1);
+        fds_ = std::exchange(rhs.fds_, { -1, -1 });
         return *this;
     }
-    ~DummyFD()
+    ~Pipe()
     {
-        if (fd_ >= 0) {
-            orig_close(fd_);
-            fd_ = -1;
+        close_handler_fd();
+        close_client_fd();
+    }
+    int client_fd() const noexcept { return fds_.first; }
+    int handler_fd() const noexcept { return fds_.second; }
+    void write_handler_fd(std::string_view sv)
+    {
+        const auto rc = orig_write(handler_fd(), sv.data(), sv.size());
+        if (rc != sv.size()) {
+            // TODO
+            throw std::runtime_error("write failed: " + std::to_string(rc) + " " +
+                                     strerror(errno));
         }
     }
-    int fd() const noexcept { return fd_; }
+
+    void close_client_fd() noexcept
+    {
+        if (fds_.first >= 0) {
+            orig_close(fds_.first);
+            fds_.first = -1;
+        }
+    }
+    void close_handler_fd() noexcept
+    {
+        if (fds_.second >= 0) {
+            orig_close(fds_.second);
+            fds_.second = -1;
+        }
+    }
 
 private:
-    int fd_;
+    std::pair<int, int> fds_;
 };
 
 
@@ -114,7 +141,7 @@ public:
     Connection& operator=(const Connection&) = delete;
     Connection& operator=(Connection&&) = delete;
 
-    int fd() const noexcept { return dummy_fd_.fd(); }
+    int fd() const noexcept { return fds_.client_fd(); }
     ssize_t read(void* buf, size_t count);
     ssize_t write(const void* buf, size_t count);
     int getsockopt(int level, int optname, void* optval, socklen_t* optlen);
@@ -123,7 +150,17 @@ public:
     int connect(const struct sockaddr* addr, socklen_t addrlen);
 
 private:
-    DummyFD dummy_fd_;
+    void read_thread_main();
+
+    std::jthread read_thread_;
+    std::mutex read_queue_mu_;
+    std::condition_variable read_queue_cv_;
+    std::deque<ax25ms::SeqConnectResponse> read_queue_;
+    bool read_ready_ = false;
+    bool read_done_ = false;
+
+
+    Pipe fds_;
     int type_;
     int protocol_;
     bool extseq_ = false;
@@ -179,15 +216,14 @@ __attribute__((constructor)) void init()
 }
 
 
-int make_fd()
+std::pair<int, int> make_fds()
 {
     // Create a dummy fd just to reserve the fd.
-    int fd[2];
-    if (-1 == pipe(fd)) {
-        throw std::runtime_error(std::string("pipe(): ") + strerror(errno));
+    int fds[2];
+    if (-1 == socketpair(PF_LOCAL, SOCK_STREAM, 0, fds)) {
+        throw std::runtime_error(std::string("socketpair(): ") + strerror(errno));
     }
-    orig_close(fd[1]);
-    return fd[0];
+    return { fds[0], fds[1] };
 }
 
 ax25ms::SeqPacketService::Stub* router()
@@ -205,19 +241,65 @@ ax25ms::SeqPacketService::Stub* router()
 
 
 Connection::Connection(int type, int protocol)
-    : dummy_fd_(make_fd()), type_(type), protocol_(protocol)
+    : read_thread_([this] { read_thread_main(); }),
+      fds_(make_fds()),
+      type_(type),
+      protocol_(protocol)
 {
+}
+
+void Connection::read_thread_main()
+{
+    {
+        std::unique_lock<std::mutex> lk(read_queue_mu_);
+        read_queue_cv_.wait(lk, [this] { return read_ready_; });
+    }
+
+    // Connection failed.
+    if (!stream_) {
+        return;
+    }
+
+    ax25ms::SeqConnectResponse resp;
+
+    while (stream_->Read(&resp)) {
+        {
+            std::unique_lock<std::mutex> lk(read_queue_mu_);
+            read_queue_cv_.wait(lk, [this] {
+                return read_queue_.size() < 10; // TODO: max value
+            });
+            read_queue_.push_back(resp);
+            read_queue_cv_.notify_one();
+        }
+        fds_.write_handler_fd("x");
+    }
+    // TODO: Finish() and stuff.
+    log() << "stream ended\n";
+    fds_.close_handler_fd();
+    std::unique_lock<std::mutex> lk(read_queue_mu_);
+    read_done_ = true;
 }
 
 ssize_t Connection::read(void* buf, size_t count)
 {
     for (;;) {
         ax25ms::SeqConnectResponse resp;
-        assert(stream_);
-        if (!stream_->Read(&resp)) {
-            log() << "stream ended\n";
-            // TODO: Finish() and stuff.
-            return 0;
+        {
+            std::unique_lock<std::mutex> lk(read_queue_mu_);
+            read_queue_cv_.wait(lk, [this] { return !read_queue_.empty(); });
+            resp = read_queue_.front();
+            read_queue_.pop_front();
+            read_queue_cv_.notify_one();
+        }
+        // Flush token.
+        {
+            char buf[1];
+            const auto rc = orig_read(fds_.client_fd(), buf, 1);
+            if (rc != 1) {
+                // TODO
+                throw std::runtime_error("couldn't read the token: " +
+                                         std::to_string(rc) + " " + strerror(errno));
+            }
         }
         if (!resp.has_packet()) {
             continue;
@@ -232,8 +314,13 @@ ssize_t Connection::read(void* buf, size_t count)
 
 ssize_t Connection::write(const void* buf, size_t count)
 {
-    errno = ENOSYS;
-    return -1;
+    ax25ms::SeqConnectRequest req;
+    req.mutable_packet()->set_payload(buf, count);
+    if (!stream_->Write(req)) {
+        errno = ECONNRESET;
+        return -1;
+    }
+    return count;
 }
 
 int Connection::getsockopt(int level, int optname, void* optval, socklen_t* optlen)
@@ -317,7 +404,12 @@ int Connection::connect(const struct sockaddr* addr, socklen_t addrlen)
 
     // Wait for the connection metadata.
     ax25ms::SeqConnectResponse resp;
-    if (!stream_->Read(&resp)) {
+    bool ok = stream_->Read(&resp);
+    std::unique_lock<std::mutex> lk(read_queue_mu_);
+    read_ready_ = true;
+    read_queue_cv_.notify_one();
+    if (!ok) {
+        stream_ = nullptr;
         errno = ECONNREFUSED;
         return -1;
     }
