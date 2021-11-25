@@ -67,10 +67,11 @@ const char* log_prefix = "preload: ";
 
 char* radio_addr = nullptr;  // AX25_ADDR
 char* router_addr = nullptr; // AX25_ROUTER
+bool debug = false;          // AX25_DEBUG
 
 std::ostream& log()
 {
-    if (true) {
+    if (debug) {
         std::clog << log_prefix;
         return std::clog;
     }
@@ -99,12 +100,20 @@ public:
         close_handler_fd();
         close_client_fd();
     }
-    int client_fd() const noexcept { return fds_.first; }
-    int handler_fd() const noexcept { return fds_.second; }
+    int client_fd() const noexcept
+    {
+        std::unique_lock<std::mutex> lk(mu_);
+        return fds_.first;
+    }
+    int handler_fd() const noexcept
+    {
+        std::unique_lock<std::mutex> lk(mu_);
+        return fds_.second;
+    }
     void write_handler_fd(std::string_view sv)
     {
         const auto rc = orig_write(handler_fd(), sv.data(), sv.size());
-        if (rc != sv.size()) {
+        if (rc != static_cast<ssize_t>(sv.size())) {
             // TODO
             throw std::runtime_error("write failed: " + std::to_string(rc) + " " +
                                      strerror(errno));
@@ -113,6 +122,7 @@ public:
 
     void close_client_fd() noexcept
     {
+        std::unique_lock<std::mutex> lk(mu_);
         if (fds_.first >= 0) {
             orig_close(fds_.first);
             fds_.first = -1;
@@ -120,6 +130,7 @@ public:
     }
     void close_handler_fd() noexcept
     {
+        std::unique_lock<std::mutex> lk(mu_);
         if (fds_.second >= 0) {
             orig_close(fds_.second);
             fds_.second = -1;
@@ -127,6 +138,7 @@ public:
     }
 
 private:
+    mutable std::mutex mu_;
     std::pair<int, int> fds_;
 };
 
@@ -135,11 +147,13 @@ class Connection
 {
 public:
     Connection(int type, int protocol);
+    ~Connection();
 
     Connection(const Connection&) = delete;
     Connection(Connection&&) = delete;
     Connection& operator=(const Connection&) = delete;
     Connection& operator=(Connection&&) = delete;
+
 
     int fd() const noexcept { return fds_.client_fd(); }
     ssize_t read(void* buf, size_t count);
@@ -157,7 +171,8 @@ private:
     std::condition_variable read_queue_cv_;
     std::deque<ax25ms::SeqConnectResponse> read_queue_;
     bool read_ready_ = false;
-    bool read_done_ = false;
+    bool read_stop_ = false; // There is no stream_ctx_.IsCancelled()
+                             // (?), so need this bool.
 
 
     Pipe fds_;
@@ -174,16 +189,44 @@ private:
     std::string src_;
 };
 
-std::mutex mu;
-std::map<int, std::unique_ptr<Connection>> connections;
-Connection* get_connection(int fd)
+class Connections
 {
-    std::unique_lock<std::mutex> lk(mu);
-    auto itr = connections.find(fd);
-    if (itr == connections.end()) {
+public:
+    using key_t = int;
+    using val_t = std::unique_ptr<Connection>;
+    using map_t = std::map<key_t, val_t>;
+
+    Connection* get(int fd);
+    void insert(std::pair<key_t, val_t>&& val);
+    map_t::node_type extract(key_t val);
+
+private:
+    std::mutex mu_;
+    map_t connections_;
+};
+
+Connections connections;
+
+Connection* Connections::get(int fd)
+{
+    std::unique_lock<std::mutex> lk(mu_);
+    auto itr = connections_.find(fd);
+    if (itr == connections_.end()) {
         return nullptr;
     }
     return itr->second.get();
+}
+
+Connections::map_t::node_type Connections::extract(key_t val)
+{
+    std::unique_lock<std::mutex> lk(mu_);
+    return connections_.extract(val);
+}
+
+void Connections::insert(std::pair<key_t, val_t>&& val)
+{
+    std::unique_lock<std::mutex> lk(mu_);
+    connections_.insert(std::move(val));
 }
 
 __attribute__((constructor)) void init()
@@ -212,6 +255,10 @@ __attribute__((constructor)) void init()
         router_addr = strdup("localhost:12345");
     } else {
         router_addr = strdup(e);
+    }
+
+    if (getenv("AX25_DEBUG")) {
+        debug = true;
     }
 }
 
@@ -248,6 +295,14 @@ Connection::Connection(int type, int protocol)
 {
 }
 
+Connection::~Connection()
+{
+    std::unique_lock<std::mutex> lk(read_queue_mu_);
+    read_stop_ = true;
+    stream_ctx_.TryCancel(); // End ongoing and future stream_->Read().
+    read_queue_cv_.notify_all();
+}
+
 void Connection::read_thread_main()
 {
     {
@@ -266,8 +321,12 @@ void Connection::read_thread_main()
         {
             std::unique_lock<std::mutex> lk(read_queue_mu_);
             read_queue_cv_.wait(lk, [this] {
-                return read_queue_.size() < 10; // TODO: max value
+                return read_queue_.size() < 10 || read_stop_; // TODO: max value
             });
+            if (read_stop_) {
+                std::cerr << "HABETS read queue ending\n";
+                break;
+            }
             read_queue_.push_back(resp);
             read_queue_cv_.notify_one();
         }
@@ -276,8 +335,6 @@ void Connection::read_thread_main()
     // TODO: Finish() and stuff.
     log() << "stream ended\n";
     fds_.close_handler_fd();
-    std::unique_lock<std::mutex> lk(read_queue_mu_);
-    read_done_ = true;
 }
 
 ssize_t Connection::read(void* buf, size_t count)
@@ -439,7 +496,6 @@ int socket(int domain, int type, int protocol)
         return orig_socket(domain, type, protocol);
     }
     log() << "socket(AF_AX25)\n";
-    std::unique_lock<std::mutex> lk(mu);
     auto con = std::make_unique<Connection>(type, protocol);
     const auto fd = con->fd();
     connections.insert({ fd, std::move(con) });
@@ -448,24 +504,19 @@ int socket(int domain, int type, int protocol)
 
 int close(int fd)
 {
-    if (!get_connection(fd)) {
+    if (!connections.get(fd)) {
         assert(orig_close);
         return orig_close(fd);
     }
     log() << "close(AF_AX25)\n";
 
-    // Fancy lambda to make sure we unlock before calling destructor,
-    // because destructor likely causes close().
-    [fd] {
-        std::unique_lock<std::mutex> lk(mu);
-        return connections.extract(fd);
-    }();
+    connections.extract(fd);
     return 0;
 }
 
 int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)
 {
-    auto con = get_connection(fd);
+    auto con = connections.get(fd);
     if (!con) {
         assert(orig_bind);
         return orig_bind(fd, addr, addrlen);
@@ -476,7 +527,7 @@ int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)
 
 int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
 {
-    auto con = get_connection(fd);
+    auto con = connections.get(fd);
     if (!con) {
         assert(orig_connect);
         return orig_connect(fd, addr, addrlen);
@@ -487,7 +538,7 @@ int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
 
 ssize_t read(int fd, void* buf, size_t count)
 {
-    auto con = get_connection(fd);
+    auto con = connections.get(fd);
     if (!con) {
         assert(orig_read);
         return orig_read(fd, buf, count);
@@ -498,7 +549,7 @@ ssize_t read(int fd, void* buf, size_t count)
 
 ssize_t write(int fd, const void* buf, size_t count)
 {
-    auto con = get_connection(fd);
+    auto con = connections.get(fd);
     if (!con) {
         assert(orig_write);
         return orig_write(fd, buf, count);
@@ -509,7 +560,7 @@ ssize_t write(int fd, const void* buf, size_t count)
 
 int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
 {
-    auto con = get_connection(fd);
+    auto con = connections.get(fd);
     if (!con) {
         assert(orig_getsockopt);
         return orig_getsockopt(fd, level, optname, optval, optlen);
@@ -520,7 +571,7 @@ int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
 
 int setsockopt(int fd, int level, int optname, const void* optval, socklen_t optlen)
 {
-    auto con = get_connection(fd);
+    auto con = connections.get(fd);
     if (!con) {
         assert(orig_setsockopt);
         return orig_setsockopt(fd, level, optname, optval, optlen);
