@@ -96,7 +96,7 @@ void Connection::maybe_send()
         if (unacked++ > window_size_) {
             break;
         }
-        if (std::chrono::steady_clock::now() < e.next_tx) {
+        if (scheduler_->now() < e.next_tx) {
             // TODO: shouldn't this queue be sorted, so break?
             continue;
         }
@@ -119,7 +119,7 @@ void Connection::maybe_send()
             send_queue_.clear();
         } else {
             nr_sent_ = nr_;
-            e.next_tx = std::chrono::steady_clock::now() + default_t1;
+            e.next_tx = scheduler_->now() + default_t1;
         }
     }
     if (!send_queue_.empty()) {
@@ -284,6 +284,7 @@ std::pair<std::string, grpc::Status> Connection::read()
 
 void Connection::rr(const ax25::Packet& packet)
 {
+    assert(packet.has_rr());
     std::clog << "RR received\n";
     process_acks(packet);
 }
@@ -296,12 +297,12 @@ void Connection::iframe(const ax25::Packet& packet)
 
     // If packet is out of order, drop it. TODO: selective.
     if (nrm() != packet.iframe().ns()) {
-        std::cerr << "Got packet out of order: got " << packet.iframe().ns() << "want "
+        std::cerr << "Got packet out of order: got " << packet.iframe().ns() << " want "
                   << nrm() << "\n";
         // Enqueue RR packet.
         const auto st = send_rr(packet.src(), packet.dst(), nrm());
         if (!st.ok()) {
-            std::cerr << "Failed to send RR\n";
+            std::cerr << "Failed to send RR: " << st.error_message() << "\n";
         }
         return;
     }
@@ -331,7 +332,7 @@ void Connection::iframe(const ax25::Packet& packet)
         // Send RR packet.
         const auto st = send_rr(src, dst, nrm());
         if (!st.ok()) {
-            std::cerr << "Failed to send RR\n";
+            std::cerr << "Failed to send RR: " << st.error_message() << "\n";
         } else {
             nr_sent_ = nr_;
         }
@@ -353,7 +354,7 @@ grpc::Status Connection::write(std::string_view payload)
     ns_++;
     send_queue_.push_back(Entry{
         .packet = std::move(packet),
-        .next_tx = std::chrono::steady_clock::now(),
+        .next_tx = scheduler_->now(),
     });
     scheduler_->add(immediately, [this] { maybe_send(); });
     return grpc::Status::OK;

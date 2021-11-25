@@ -45,6 +45,13 @@ public:
     void add(time_point_t, cb_t cb);
     void run();
 
+    time_point_t now();
+
+    void stop_for_test() noexcept;
+    void tick_for_test(duration_t d);
+
+    void drain();
+
 private:
     struct timer_t {
         time_point_t timepoint; // Time it should trigger.
@@ -55,6 +62,10 @@ private:
     std::condition_variable cv_;
     std::map<time_point_t, std::unique_ptr<timer_t>> timers_;
     std::atomic<bool> shutdown_ = false;
+
+    bool stop_for_test_ = false;
+    time_point_t time_for_test_{};
+    std::atomic<bool> running_ = false;
 };
 } // namespace ax25ms
 #endif

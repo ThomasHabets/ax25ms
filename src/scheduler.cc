@@ -21,7 +21,11 @@ namespace ax25ms {
 
 Timer::Timer() : thread_([this] { run(); }) {}
 
-Timer::~Timer() { shutdown_ = true; }
+Timer::~Timer()
+{
+    shutdown_ = true;
+    cv_.notify_all();
+}
 
 void Timer::run()
 {
@@ -36,6 +40,18 @@ void Timer::run()
                     return std::unique_ptr<timer_t>();
                 }
                 auto cur = timers_.begin()->first;
+
+                if (stop_for_test_) {
+                    auto noww = now();
+                    if (noww > cur) {
+                        break;
+                    }
+                    mu_.unlock();
+                    std::this_thread::sleep_for(std::chrono::milliseconds{ 10 });
+                    mu_.lock();
+                    continue;
+                }
+
                 const bool notimeout = cv_.wait_until(lk, cur, [this, &cur] {
                     auto maybe_new = timers_.begin()->first;
                     return maybe_new != cur;
@@ -51,11 +67,13 @@ void Timer::run()
             auto entry = std::move(first->second);
             timers_.erase(first);
             return entry;
-        };
+        }();
         if (shutdown_) {
             return;
         }
-        getcb()->cb();
+        running_ = true;
+        getcb->cb();
+        running_ = false;
     }
 }
 
@@ -63,6 +81,38 @@ void Timer::add(duration_t dur, cb_t cb)
 {
     add(std::chrono::steady_clock::now() + dur, cb);
 }
+
+void Timer::stop_for_test() noexcept
+{
+    time_for_test_ = std::chrono::steady_clock::now();
+    stop_for_test_ = true;
+}
+
+Timer::time_point_t Timer::now()
+{
+    if (stop_for_test_) {
+        return time_for_test_;
+    }
+    return std::chrono::steady_clock::now();
+}
+
+void Timer::drain()
+{
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{ 100 });
+        std::unique_lock<std::mutex> lk(mu_);
+        if (timers_.empty() && !running_) {
+            return;
+        }
+    }
+}
+
+void Timer::tick_for_test(duration_t t)
+{
+    time_for_test_ = now() + t;
+    cv_.notify_all();
+}
+
 void Timer::add(time_point_t tp, cb_t cb)
 {
     std::unique_lock<std::mutex> lk(mu_);
