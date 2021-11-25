@@ -271,22 +271,29 @@ public:
     }
 
     void iframe(const ax25::Packet& packet);
+    void rr(const ax25::Packet& packet);
 
     void disc(const ax25::Packet& packet) { std::clog << "disc\n"; }
 
     void process_acks(const ax25::Packet& packet)
     {
         // Remove acked packets from send queue.
-        {
-            std::unique_lock<std::mutex> lk(send_mu_);
-            while (!send_queue_.empty()) {
-                const auto ns = send_queue_.front().packet.iframe().ns();
-                if (ns >= packet.iframe().nr()) {
-                    break;
-                }
-                std::clog << "Packet acked with sequence " << ns << "\n";
-                send_queue_.pop_front();
+        int nr;
+        if (packet.has_iframe()) {
+            nr = packet.iframe().nr();
+        } else if (packet.has_rr()) {
+            nr = packet.rr().nr();
+        } else {
+            return;
+        }
+        std::unique_lock<std::mutex> lk(send_mu_);
+        while (!send_queue_.empty()) {
+            const auto ns = send_queue_.front().packet.iframe().ns();
+            if (ns >= nr) {
+                break;
             }
+            std::clog << "Packet acked with sequence " << ns << "\n";
+            send_queue_.pop_front();
         }
     }
 
@@ -336,6 +343,11 @@ private:
     }
 };
 
+void Connection::rr(const ax25::Packet& packet)
+{
+    std::clog << "RR received\n";
+    process_acks(packet);
+}
 void Connection::iframe(const ax25::Packet& packet)
 {
     std::clog << "iframe received: " << packet.iframe().payload() << "\n";
@@ -362,31 +374,29 @@ void Connection::iframe(const ax25::Packet& packet)
     cv_.notify_all();
 
     // Schedule an ACK.
-    scheduler_->add(
-        default_t2,
-        [this, src = packet.src(), dst = packet.dst(), n = packet.iframe().ns()] {
-            {
-                std::unique_lock<std::mutex> lk(send_mu_);
-                if (!send_queue_.empty()) {
-                    // If packets are scheduled then
-                    // they'll take care of it.
-                    return;
-                }
-            }
-            // If implicit ACK already sent, then never mind.
-            std::unique_lock<std::mutex> lk(mu_);
-            if (nr_sent_ >= nr_) {
+    scheduler_->add(default_t2, [this, src = packet.src(), dst = packet.dst()] {
+        {
+            std::unique_lock<std::mutex> lk(send_mu_);
+            if (!send_queue_.empty()) {
+                // If packets are scheduled then
+                // they'll take care of it.
                 return;
             }
+        }
+        // If implicit ACK already sent, then never mind.
+        std::unique_lock<std::mutex> lk(mu_);
+        if (nr_sent_ >= nr_) {
+            return;
+        }
 
-            // Send RR packet.
-            const auto st = send_rr(src, dst, nrm());
-            if (!st.ok()) {
-                std::cerr << "Failed to send RR\n";
-            } else {
-                nr_sent_ = nr_;
-            }
-        });
+        // Send RR packet.
+        const auto st = send_rr(src, dst, nrm());
+        if (!st.ok()) {
+            std::cerr << "Failed to send RR\n";
+        } else {
+            nr_sent_ = nr_;
+        }
+    });
 }
 
 
@@ -434,6 +444,8 @@ public:
             conn->ua(packet);
         } else if (packet.has_iframe()) {
             conn->iframe(packet);
+        } else if (packet.has_rr()) {
+            conn->rr(packet);
         } else if (packet.has_disc()) {
             conn->disc(packet);
         } else {
@@ -508,7 +520,7 @@ public:
                 if (!st.ok()) {
                     return;
                 }
-                std::clog << "SENDING ON STREAM: " << payload << "\n";
+                // std::clog << "SENDING ON STREAM: " << payload << "\n";
                 ax25ms::SeqConnectResponse data;
                 data.mutable_packet()->set_payload(payload);
                 if (!stream->Write(data)) {
