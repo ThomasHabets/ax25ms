@@ -13,6 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#include "seqpacket.h"
+
 #include "fdwrap.h"
 #include "parse.h"
 #include "scheduler.h"
@@ -77,271 +79,208 @@ constexpr int default_n2 = 3;
 // Although see https://tldp.org/HOWTO/AX25-HOWTO/x235.html, where linux defaults
 // to: T1: 10s t2: 3s t3: 300s window: 2
 
-class Connection
+Connection::Connection(std::string_view mycall,
+                       std::string_view peer,
+                       ax25ms::RouterService::Stub* router,
+                       Timer* scheduler)
+    : router_(router), scheduler_(scheduler), mycall_(mycall), peer_(peer)
 {
-public:
-    Connection(std::string_view mycall,
-               std::string_view peer,
-               ax25ms::RouterService::Stub* router,
-               Timer* scheduler)
-        : router_(router), scheduler_(scheduler), mycall_(mycall), peer_(peer)
-    {
-    }
-    ~Connection() {}
-    enum class State {
-        IDLE = 0,
-        CONNECTING = 1,
-        CONNECTED = 2,
-    };
+}
 
-
-    // No copy.
-    Connection(const Connection&) = delete;
-    Connection& operator=(const Connection&) = delete;
-
-    // Move ok.
-    Connection(Connection&&) = default;
-    Connection& operator=(Connection&&) = default;
-
-    struct Entry {
-        ax25::Packet packet;
-        Timer::time_point_t next_tx;
-    };
-
-    grpc::Status write(std::string_view payload);
-
-    std::pair<std::string, grpc::Status> read()
-    {
+void Connection::maybe_send()
+{
+    // If there are unsent packets, send them.
+    std::unique_lock<std::mutex> lk(send_mu_);
+    int unacked = 0;
+    for (auto& e : send_queue_) {
+        if (unacked++ > window_size_) {
+            break;
+        }
+        if (std::chrono::steady_clock::now() < e.next_tx) {
+            // TODO: shouldn't this queue be sorted, so break?
+            continue;
+        }
         std::unique_lock<std::mutex> lk(mu_);
-        cv_.wait(
-            lk, [this] { return !receive_queue_.empty() || state_ != State::CONNECTED; });
-        if (state_ != State::CONNECTED) {
-            return { "", grpc::Status(grpc::ABORTED, "disconnected") };
+        if (e.packet.has_iframe()) {
+            e.packet.mutable_iframe()->set_nr(nrm());
         }
-        const auto payload = receive_queue_.front();
-        receive_queue_.pop_front();
-        return { payload, grpc::Status::OK };
-    }
+        e.packet.set_command_response(true);
+        e.packet.set_rr_extseq(modulus_ == extended_modulus);
+        const auto data = ax25::serialize(e.packet);
 
-    /*
-     * A packet has been added, or a timer has expired.
-     * Do something, such as re-send.
-     */
-    void maybe_send()
-    {
-        // If there are unsent packets, send them.
-        std::unique_lock<std::mutex> lk(send_mu_);
-        int unacked = 0;
-        for (auto& e : send_queue_) {
-            if (unacked++ > window_size_) {
-                break;
-            }
-            if (std::chrono::steady_clock::now() < e.next_tx) {
-                // TODO: shouldn't this queue be sorted, so break?
-                continue;
-            }
-            std::unique_lock<std::mutex> lk(mu_);
-            if (e.packet.has_iframe()) {
-                e.packet.mutable_iframe()->set_nr(nrm());
-            }
-            e.packet.set_command_response(true);
-            e.packet.set_rr_extseq(modulus_ == extended_modulus);
-            const auto data = ax25::serialize(e.packet);
-
-            ax25ms::SendRequest sreq;
-            sreq.mutable_frame()->set_payload(data);
-            ax25ms::SendResponse resp;
-            grpc::ClientContext ctx;
-            const auto status = router_->Send(&ctx, sreq, &resp);
-            if (!status.ok()) {
-                std::cerr << "  Sending data failed\n";
-                change_state(State::CONNECTED, State::IDLE);
-                send_queue_.clear();
-            } else {
-                nr_sent_ = nr_;
-                e.next_tx = std::chrono::steady_clock::now() + default_t1;
-            }
-        }
-        if (!send_queue_.empty()) {
-            scheduler_->add(send_queue_.front().next_tx, [this] { maybe_send(); });
-        }
-    }
-
-    grpc::Status disconnect()
-    {
-        ax25::Packet packet;
-        packet.set_src(mycall_);
-        packet.set_dst(peer_);
-        packet.mutable_disc()->set_poll(true);
-        packet.set_command_response(true);
-        packet.set_rr_extseq(modulus_ == extended_modulus);
-        const auto data = ax25::serialize(packet);
         ax25ms::SendRequest sreq;
         sreq.mutable_frame()->set_payload(data);
         ax25ms::SendResponse resp;
         grpc::ClientContext ctx;
         const auto status = router_->Send(&ctx, sreq, &resp);
         if (!status.ok()) {
-            std::cerr << "  Sending DISC failed\n";
+            std::cerr << "  Sending data failed\n";
             change_state(State::CONNECTED, State::IDLE);
-            return status;
+            send_queue_.clear();
+        } else {
+            nr_sent_ = nr_;
+            e.next_tx = std::chrono::steady_clock::now() + default_t1;
         }
-        change_state(State::CONNECTED, State::IDLE);
+    }
+    if (!send_queue_.empty()) {
+        scheduler_->add(send_queue_.front().next_tx, [this] { maybe_send(); });
+    }
+}
+
+grpc::Status Connection::connect(grpc::ServerContext* ctx)
+{
+    assert(state_ == State::IDLE);
+
+    state_ = State::CONNECTING;
+
+    ax25::Packet packet;
+    packet.set_src(mycall_);
+    packet.set_dst(peer_);
+    packet.mutable_sabm()->set_poll(true);
+    packet.set_command_response(true);
+    packet.set_rr_extseq(modulus_ == extended_modulus);
+    const auto data = ax25::serialize(packet);
+
+    ax25ms::SendRequest sreq;
+    sreq.mutable_frame()->set_payload(data);
+    std::unique_lock<std::mutex> lk(mu_);
+    scheduler_->add(immediately, [this, ctx, &sreq] { connect_send(ctx, sreq); });
+    std::clog << "Awaiting state change\n";
+    cv_.wait(lk, [this] {
+        std::clog << "State change? " << int(state_) << "\n";
+        return state_ != State::CONNECTING;
+    });
+    std::clog << "got state change\n";
+    if (state_ == State::CONNECTED) {
         return grpc::Status::OK;
     }
+    return grpc::Status(grpc::UNKNOWN, "connection timed out");
+}
 
-    // Can not call concurrently.
-    grpc::Status connect(grpc::ServerContext* ctx)
-    {
-        assert(state_ == State::IDLE);
+void Connection::ua(const ax25::Packet& packet)
+{
+    std::clog << "Received UA\n";
+    change_state(State::CONNECTING, State::CONNECTED);
+    // TODO: what about other states?
+}
 
-        state_ = State::CONNECTING;
+grpc::Status Connection::send_rr(std::string_view dst, std::string_view src, int n)
+{
+    ax25::Packet ack;
+    ack.set_src(src.data(), src.size());
+    ack.set_dst(dst.data(), dst.size());
+    ack.mutable_rr()->set_nr(n);
+    ack.mutable_rr()->set_poll(true);
+    const auto data = ax25::serialize(ack);
+    ax25ms::SendRequest sreq;
+    sreq.mutable_frame()->set_payload(data);
+    ax25ms::SendResponse resp;
+    grpc::ClientContext ctx;
+    return router_->Send(&ctx, sreq, &resp);
+}
 
-        ax25::Packet packet;
-        packet.set_src(mycall_);
-        packet.set_dst(peer_);
-        packet.mutable_sabm()->set_poll(true);
-        packet.set_command_response(true);
-        packet.set_rr_extseq(modulus_ == extended_modulus);
-        const auto data = ax25::serialize(packet);
-
-        ax25ms::SendRequest sreq;
-        sreq.mutable_frame()->set_payload(data);
-        std::unique_lock<std::mutex> lk(mu_);
-        scheduler_->add(immediately, [this, ctx, &sreq] { connect_send(ctx, sreq); });
-        std::clog << "Awaiting state change\n";
-        cv_.wait(lk, [this] {
-            std::clog << "State change? " << int(state_) << "\n";
-            return state_ != State::CONNECTING;
-        });
-        std::clog << "got state change\n";
-        if (state_ == State::CONNECTED) {
-            return grpc::Status::OK;
-        }
-        return grpc::Status(grpc::UNKNOWN, "connection timed out");
+void Connection::process_acks(const ax25::Packet& packet)
+{
+    // Remove acked packets from send queue.
+    int nr;
+    if (packet.has_iframe()) {
+        nr = packet.iframe().nr();
+    } else if (packet.has_rr()) {
+        nr = packet.rr().nr();
+    } else {
+        return;
     }
-
-    void connect_send(grpc::ServerContext* ctx, ax25ms::SendRequest& sreq, int retry = 0)
-    {
-        if (retry >= default_n2 || ctx->IsCancelled()) {
-            change_state(State::CONNECTING, State::IDLE);
-            return;
+    std::unique_lock<std::mutex> lk(send_mu_);
+    while (!send_queue_.empty()) {
+        const auto ns = send_queue_.front().packet.iframe().ns();
+        if (ns >= nr) {
+            break;
         }
-        std::cerr << "Sending SABM…\n";
-        // Send SABM.
-        ax25ms::SendResponse resp;
-        const auto status = router_->Send(
-            grpc::ClientContext::FromServerContext(*ctx).get(), sreq, &resp);
-        if (!status.ok()) {
-            std::cerr << "  Sending SABM failed\n";
-            change_state(State::CONNECTING, State::IDLE);
-            return;
-        }
-        std::cerr << "  Sending SABM succeeded\n";
+        std::clog << "Packet acked with sequence " << ns << "\n";
+        send_queue_.pop_front();
+    }
+}
 
-        scheduler_->add(default_t1, [this, ctx, &sreq, retry] {
-            {
-                std::unique_lock<std::mutex> lk(mu_);
-                if (state_ != State::CONNECTING) {
-                    return;
-                }
+
+bool Connection::change_state(State from, State to)
+{
+    std::unique_lock<std::mutex> lk(mu_);
+    // std::clog << "Changing state from " << int(state_) << " to " << int(to) << "
+    // currently " << int(state_) << "\n";
+    if (state_ != from) {
+        return false;
+    }
+    state_ = to;
+    cv_.notify_all();
+    return true;
+}
+
+void Connection::connect_send(grpc::ServerContext* ctx,
+                              ax25ms::SendRequest& sreq,
+                              int retry)
+{
+    if (retry >= default_n2 || ctx->IsCancelled()) {
+        change_state(State::CONNECTING, State::IDLE);
+        return;
+    }
+    std::cerr << "Sending SABM…\n";
+    // Send SABM.
+    ax25ms::SendResponse resp;
+    const auto status =
+        router_->Send(grpc::ClientContext::FromServerContext(*ctx).get(), sreq, &resp);
+    if (!status.ok()) {
+        std::cerr << "  Sending SABM failed\n";
+        change_state(State::CONNECTING, State::IDLE);
+        return;
+    }
+    std::cerr << "  Sending SABM succeeded\n";
+
+    scheduler_->add(default_t1, [this, ctx, &sreq, retry] {
+        {
+            std::unique_lock<std::mutex> lk(mu_);
+            if (state_ != State::CONNECTING) {
+                return;
             }
-            connect_send(ctx, sreq, retry + 1);
-        });
-    }
-
-    bool change_state(State from, State to)
-    {
-        std::unique_lock<std::mutex> lk(mu_);
-        // std::clog << "Changing state from " << int(state_) << " to " << int(to) << "
-        // currently " << int(state_) << "\n";
-        if (state_ != from) {
-            return false;
         }
-        state_ = to;
-        cv_.notify_all();
-        return true;
+        connect_send(ctx, sreq, retry + 1);
+    });
+}
+
+grpc::Status Connection::disconnect()
+{
+    ax25::Packet packet;
+    packet.set_src(mycall_);
+    packet.set_dst(peer_);
+    packet.mutable_disc()->set_poll(true);
+    packet.set_command_response(true);
+    packet.set_rr_extseq(modulus_ == extended_modulus);
+    const auto data = ax25::serialize(packet);
+    ax25ms::SendRequest sreq;
+    sreq.mutable_frame()->set_payload(data);
+    ax25ms::SendResponse resp;
+    grpc::ClientContext ctx;
+    const auto status = router_->Send(&ctx, sreq, &resp);
+    if (!status.ok()) {
+        std::cerr << "  Sending DISC failed\n";
+        change_state(State::CONNECTED, State::IDLE);
+        return status;
     }
+    change_state(State::CONNECTED, State::IDLE);
+    return grpc::Status::OK;
+}
 
-    void ua(const ax25::Packet& packet)
-    {
-        std::clog << "Received UA\n";
-        change_state(State::CONNECTING, State::CONNECTED);
-        // TODO: what about other states?
+std::pair<std::string, grpc::Status> Connection::read()
+{
+    std::unique_lock<std::mutex> lk(mu_);
+    cv_.wait(lk,
+             [this] { return !receive_queue_.empty() || state_ != State::CONNECTED; });
+    if (state_ != State::CONNECTED) {
+        return { "", grpc::Status(grpc::ABORTED, "disconnected") };
     }
-
-    void iframe(const ax25::Packet& packet);
-    void rr(const ax25::Packet& packet);
-
-    void disc(const ax25::Packet& packet) { std::clog << "disc\n"; }
-
-    void process_acks(const ax25::Packet& packet)
-    {
-        // Remove acked packets from send queue.
-        int nr;
-        if (packet.has_iframe()) {
-            nr = packet.iframe().nr();
-        } else if (packet.has_rr()) {
-            nr = packet.rr().nr();
-        } else {
-            return;
-        }
-        std::unique_lock<std::mutex> lk(send_mu_);
-        while (!send_queue_.empty()) {
-            const auto ns = send_queue_.front().packet.iframe().ns();
-            if (ns >= nr) {
-                break;
-            }
-            std::clog << "Packet acked with sequence " << ns << "\n";
-            send_queue_.pop_front();
-        }
-    }
-
-private:
-    bool connected_ = false;
-    ax25ms::RouterService::Stub* router_;
-    Timer* scheduler_;
-    std::string mycall_;
-    std::string peer_;
-
-    std::mutex send_mu_;
-    std::deque<Entry> send_queue_;
-
-    std::mutex mu_;
-    std::condition_variable cv_; // Trigger when state changes.
-    std::deque<std::string> receive_queue_;
-    State state_ = State::IDLE;
-
-    static constexpr int normal_modulus = 8;
-    static constexpr int extended_modulus = 128;
-
-    const int modulus_ = normal_modulus;
-    int window_size_ = 4; // TODO: what to default to?
-    int64_t nr_ = 0;      // expected next packet.
-    int64_t nr_sent_ = 0; // Last nc that was sent.
-    int64_t ns_ = 0;      // next sequence number to send.
-
-    // call with lock held.
-    int nrm() const noexcept { return nr_ % modulus_; }
-    int nsm() const noexcept { return ns_ % modulus_; }
-
-    ax25ms::SeqMetadata metadata_;
-
-    grpc::Status send_rr(std::string_view dst, std::string_view src, int n)
-    {
-        ax25::Packet ack;
-        ack.set_src(src.data(), src.size());
-        ack.set_dst(dst.data(), dst.size());
-        ack.mutable_rr()->set_nr(n);
-        ack.mutable_rr()->set_poll(true);
-        const auto data = ax25::serialize(ack);
-        ax25ms::SendRequest sreq;
-        sreq.mutable_frame()->set_payload(data);
-        ax25ms::SendResponse resp;
-        grpc::ClientContext ctx;
-        return router_->Send(&ctx, sreq, &resp);
-    }
-};
+    const auto payload = receive_queue_.front();
+    receive_queue_.pop_front();
+    return { payload, grpc::Status::OK };
+}
 
 void Connection::rr(const ax25::Packet& packet)
 {

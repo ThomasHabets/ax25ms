@@ -2,7 +2,7 @@ AUTOMAKE_OPTIONS=foreign
 DISTCLEANFILES=*~
 AM_CPPFLAGS=-I$(builddir)
 
-TESTS=serial_test
+TESTS=serial_test seqpacket_test
 check_PROGRAMS=$(TESTS)
 bin_PROGRAMS=listen serial seqpacket decode seqpacket_client
 lib_LTLIBRARIES=libpreload.la
@@ -56,6 +56,18 @@ proto/gen/api.pb.cc
 
 seqpacket_SOURCES=\
 src/main.cc \
+src/seqpacket.cc \
+src/serialize.cc \
+src/parse.cc \
+src/scheduler.cc \
+src/util.cc \
+proto/gen/ax25.pb.cc \
+proto/gen/aprs.pb.cc \
+proto/gen/api.grpc.pb.cc \
+proto/gen/api.pb.cc
+
+seqpacket_test_SOURCES=\
+src/seqpacket_test.cc \
 src/seqpacket.cc \
 src/serialize.cc \
 src/parse.cc \
