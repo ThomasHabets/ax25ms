@@ -22,10 +22,12 @@ limitations under the License.
 #include "fdwrap.h"
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
+#include "util.h"
 #include <condition_variable>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <cstdint>
 #include <iomanip>
 #include <queue>
 #include <string>
@@ -35,10 +37,74 @@ limitations under the License.
 #include <grpcpp/grpcpp.h>
 
 namespace {
+constexpr uint8_t FEND = 0xC0;
+constexpr uint8_t FESC = 0xDB;
+constexpr uint8_t TFEND = 0xDC;
+constexpr uint8_t TFESC = 0xDD;
+
+
 [[noreturn]] void usage(const char* av0, int err)
 {
     std::cout << av0 << ": Usage [ -h ] [ -l <listen addr> -p </dev/...>\n";
     exit(err);
+}
+
+std::string kiss_escape(std::string_view sv)
+{
+    std::vector<uint8_t> tmp;
+    for (const auto& ch : sv) {
+        const auto i8 = static_cast<uint8_t>(ch);
+        switch (i8) {
+        case FESC:
+            tmp.push_back(FESC);
+            tmp.push_back(TFESC);
+            break;
+        case FEND:
+            tmp.push_back(FESC);
+            tmp.push_back(TFEND);
+            break;
+        default:
+            tmp.push_back(i8);
+        }
+    }
+    return std::string(tmp.begin(), tmp.end());
+}
+
+std::string kiss_unescape(std::string_view sv)
+{
+    std::cerr << "unescapeing:   " << ax25ms::str2hex(sv) << "\n";
+    std::vector<uint8_t> tmp;
+    for (auto itr = sv.begin(); itr != sv.end(); ++itr) {
+        const auto i8 = static_cast<uint8_t>(*itr);
+
+        if (itr + 1 == sv.end()) {
+            // TODO: still check for FESC
+            tmp.push_back(i8);
+            continue;
+        }
+
+        if (i8 != FESC) {
+            tmp.push_back(i8);
+            continue;
+        }
+
+        itr++;
+        const auto i8e = static_cast<uint8_t>(*itr);
+
+        switch (i8e) {
+        case TFESC:
+            tmp.push_back(FESC);
+            break;
+        case TFEND:
+            tmp.push_back(FEND);
+            break;
+        default:
+            throw std::runtime_error("INVALID Escape");
+        }
+    }
+    auto ret = std::string(tmp.begin(), tmp.end());
+    std::cerr << "… unescaped to " << ax25ms::str2hex(ret) << "\n";
+    return ret;
 }
 
 class Queue
@@ -82,14 +148,12 @@ public:
             UNKNOWN,
             READING,
         };
-        constexpr uint8_t FEND = 0xC0;
-        constexpr uint8_t FESC = 0xDB;
-        constexpr uint8_t TFEND = 0xDC;
-        constexpr uint8_t TFESC = 0xDD;
         KISSState state = KISSState::UNKNOWN;
-        std::vector<char> current;
+        // std::vector<uint8_t> current;
         for (;;) {
             std::vector<uint8_t>::iterator fend;
+
+            // Read until we have a FEND.
             for (;;) {
                 fend = std::find(buf.begin(), buf.end(), FEND);
                 if (fend != buf.end()) {
@@ -108,52 +172,21 @@ public:
                 }
             }
 
-            // If unsynced, clear until first FEND.
-            if (state == KISSState::UNKNOWN) {
-                state = KISSState::READING;
-                buf.erase(buf.begin(), ++fend);
-
-            } else if (state == KISSState::READING) {
-                // If reading, consume
-                auto pos = buf.begin();
-                for (; pos < buf.end(); pos++) {
-                    if (*pos == FESC) {
-                        pos++;
-                        if (*pos == TFEND) {
-                            current.push_back(FEND);
-                        } else if (*pos == TFESC) {
-                            current.push_back(FESC);
-                        } else {
-                            std::cerr << "Bad KISS escape\n";
-                            state = KISSState::UNKNOWN;
-                            current.clear();
-                            break;
-                        }
-                    } else if (*pos == FEND) {
-                        ++pos;
-                        if (current.empty()) {
-                            break;
-                        }
-                        switch (current[0]) {
-                        case 0x00: // Data
-                            if (current.size() > 1) {
-                                ax25ms::Frame frame{};
-                                frame.set_payload(current.data() + 1, current.size() - 1);
-                                inject(frame);
-                            }
-                            break;
-                        default:
-                            std::clog << "Unknown kiss frame " << std::hex
-                                      << static_cast<int>(current[0]) << "\n";
-                        }
-                        current.clear();
-                        break;
+            if (state == KISSState::READING) {
+                const auto data = kiss_unescape(std::string(buf.begin(), fend));
+                if (!data.empty()) {
+                    if (data[0] == 0) { // Data
+                        ax25ms::Frame frame{};
+                        frame.set_payload(data.data() + 1, data.size() - 1);
+                        inject(frame);
                     } else {
-                        current.push_back(*pos);
+                        std::cerr << "TODO: got frame with some L3 stuff\n";
                     }
                 }
-                buf.erase(buf.begin(), pos);
             }
+
+            state = KISSState::READING; // We've seen a FEND, so now in sync.
+            buf.erase(buf.begin(), ++fend);
         }
     }
 
@@ -193,7 +226,7 @@ public:
         const std::string data = [req] {
             std::string r = "\xC0";
             r.push_back(0);
-            r.append(req->frame().payload());
+            r.append(kiss_escape(req->frame().payload()));
             r.push_back('\xC0');
             return r;
         }();
