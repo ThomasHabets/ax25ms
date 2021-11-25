@@ -543,8 +543,10 @@ ssize_t read(int fd, void* buf, size_t count)
         assert(orig_read);
         return orig_read(fd, buf, count);
     }
-    log() << "read(AF_AX25)\n";
-    return con->read(buf, count);
+    log() << "read(AF_AX25,, " << count << ")\n";
+    const auto rc = con->read(buf, count);
+    log() << "… read(AF_AX25) = " << rc << "\n";
+    return rc;
 }
 
 ssize_t write(int fd, const void* buf, size_t count)
@@ -554,7 +556,7 @@ ssize_t write(int fd, const void* buf, size_t count)
         assert(orig_write);
         return orig_write(fd, buf, count);
     }
-    log() << "write(AF_AX25)\n";
+    log() << "write(AF_AX25, , " << count << ")\n";
     return con->write(buf, count);
 }
 
