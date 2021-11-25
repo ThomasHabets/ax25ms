@@ -112,8 +112,12 @@ public:
 
     std::pair<std::string, grpc::Status> read()
     {
-        std::unique_lock<std::mutex> lk(receive_mu_);
-        receive_cv_.wait(lk, [this] { return !receive_queue_.empty(); });
+        std::unique_lock<std::mutex> lk(mu_);
+        cv_.wait(
+            lk, [this] { return !receive_queue_.empty() || state_ != State::CONNECTED; });
+        if (state_ != State::CONNECTED) {
+            return { "", grpc::Status(grpc::ABORTED, "disconnected") };
+        }
         const auto payload = receive_queue_.front();
         receive_queue_.pop_front();
         return { payload, grpc::Status::OK };
@@ -182,6 +186,7 @@ public:
             change_state(State::CONNECTED, State::IDLE);
             return status;
         }
+        change_state(State::CONNECTED, State::IDLE);
         return grpc::Status::OK;
     }
 
@@ -205,7 +210,7 @@ public:
         std::unique_lock<std::mutex> lk(mu_);
         scheduler_->add(immediately, [this, ctx, &sreq] { connect_send(ctx, sreq); });
         std::clog << "Awaiting state change\n";
-        state_cv_.wait(lk, [this] {
+        cv_.wait(lk, [this] {
             std::clog << "State change? " << int(state_) << "\n";
             return state_ != State::CONNECTING;
         });
@@ -254,7 +259,7 @@ public:
             return false;
         }
         state_ = to;
-        state_cv_.notify_all();
+        cv_.notify_all();
         return true;
     }
 
@@ -295,12 +300,9 @@ private:
     std::mutex send_mu_;
     std::deque<Entry> send_queue_;
 
-    std::mutex receive_mu_;
-    std::condition_variable receive_cv_;
-    std::deque<std::string> receive_queue_;
-
     std::mutex mu_;
-    std::condition_variable state_cv_; // Trigger when state changes.
+    std::condition_variable cv_; // Trigger when state changes.
+    std::deque<std::string> receive_queue_;
     State state_ = State::IDLE;
 
     static constexpr int normal_modulus = 8;
@@ -355,11 +357,9 @@ void Connection::iframe(const ax25::Packet& packet)
     nr_++;
 
     // Put in the receive queue.
-    {
-        std::unique_lock<std::mutex> lk(receive_mu_);
-        receive_queue_.push_back(packet.iframe().payload());
-        receive_cv_.notify_one();
-    }
+    receive_queue_.push_back(packet.iframe().payload());
+    // Need to notify all since this cv is also used for state changes.
+    cv_.notify_all();
 
     // Schedule an ACK.
     scheduler_->add(
