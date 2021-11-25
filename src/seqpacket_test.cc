@@ -17,4 +17,8 @@ limitations under the License.
 
 using namespace ax25ms;
 
-int main() { Connection con("M0THC-1", "M0THC-2", nullptr, nullptr); }
+int main()
+{
+    Timer timer;
+    Connection con("M0THC-1", "M0THC-2", nullptr, &timer);
+}

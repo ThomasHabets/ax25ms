@@ -21,6 +21,8 @@ namespace ax25ms {
 
 Timer::Timer() : thread_([this] { run(); }) {}
 
+Timer::~Timer() { shutdown_ = true; }
+
 void Timer::run()
 {
     for (;;) {
@@ -28,7 +30,10 @@ void Timer::run()
             std::unique_lock<std::mutex> lk(mu_);
             for (;;) {
                 if (timers_.empty()) {
-                    cv_.wait(lk, [this] { return !timers_.empty(); });
+                    cv_.wait(lk, [this] { return !timers_.empty() || shutdown_; });
+                }
+                if (shutdown_) {
+                    return std::unique_ptr<timer_t>();
                 }
                 auto cur = timers_.begin()->first;
                 const bool notimeout = cv_.wait_until(lk, cur, [this, &cur] {
@@ -47,6 +52,9 @@ void Timer::run()
             timers_.erase(first);
             return entry;
         };
+        if (shutdown_) {
+            return;
+        }
         getcb()->cb();
     }
 }

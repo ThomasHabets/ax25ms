@@ -39,6 +39,7 @@ public:
     using cb_t = std::function<void()>;
 
     Timer();
+    ~Timer();
 
     void add(duration_t, cb_t cb);
     void add(time_point_t, cb_t cb);
@@ -53,6 +54,7 @@ private:
     std::mutex mu_;
     std::condition_variable cv_;
     std::map<time_point_t, std::unique_ptr<timer_t>> timers_;
+    std::atomic<bool> shutdown_ = false;
 };
 } // namespace ax25ms
 #endif
