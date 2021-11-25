@@ -151,7 +151,7 @@ std::string stringify(const ax25::Packet& packet)
 }
 } // namespace
 
-int main(int argc, char** argv)
+int wrapmain(int argc, char** argv)
 {
     {
         int opt;
@@ -194,4 +194,5 @@ int main(int argc, char** argv)
         }
         std::cout << "// file: " << fn << "\n" << stringify(packet);
     }
+    return 0;
 }

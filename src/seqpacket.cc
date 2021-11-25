@@ -555,7 +555,7 @@ namespace {
 }
 } // namespace
 
-int main(int argc, char** argv)
+int wrapmain(int argc, char** argv)
 {
     std::string router;
     std::string listen = "[::]:12346";

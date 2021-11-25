@@ -36,7 +36,7 @@ limitations under the License.
 
 #include <grpcpp/grpcpp.h>
 
-namespace {
+namespace ax25ms::serial {
 constexpr uint8_t FEND = 0xC0;
 constexpr uint8_t FESC = 0xDB;
 constexpr uint8_t TFEND = 0xDC;
@@ -72,13 +72,20 @@ std::string kiss_escape(std::string_view sv)
 
 std::string kiss_unescape(std::string_view sv)
 {
-    std::cerr << "unescapeing:   " << ax25ms::str2hex(sv) << "\n";
     std::vector<uint8_t> tmp;
     for (auto itr = sv.begin(); itr != sv.end(); ++itr) {
         const auto i8 = static_cast<uint8_t>(*itr);
 
+        if (i8 == FEND) {
+            // TODO: log error
+            return "";
+        }
+
         if (itr + 1 == sv.end()) {
-            // TODO: still check for FESC
+            if (i8 == FESC) {
+                // TODO: log esc error.
+                return "";
+            }
             tmp.push_back(i8);
             continue;
         }
@@ -103,7 +110,6 @@ std::string kiss_unescape(std::string_view sv)
         }
     }
     auto ret = std::string(tmp.begin(), tmp.end());
-    std::cerr << "… unescaped to " << ax25ms::str2hex(ret) << "\n";
     return ret;
 }
 
@@ -285,10 +291,12 @@ FDWrap open_serial(const std::string& port)
     FDWrap ret(open(port.c_str(), O_RDWR | O_NOCTTY));
     return ret;
 }
-} // namespace
+} // namespace ax25ms::serial
 
-int main(int argc, char** argv)
+int wrapmain(int argc, char** argv)
 {
+    using namespace ax25ms::serial;
+
     std::string port;
     std::string listen = "[::]:12345";
     {
@@ -335,4 +343,5 @@ int main(int argc, char** argv)
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
     std::clog << "Running…\n";
     server->Wait();
+    return 0;
 }

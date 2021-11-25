@@ -87,7 +87,7 @@ void run(grpc::ClientReader<ax25ms::Frame>* reader)
 }
 } // namespace
 
-int main(int argc, char** argv)
+int wrapmain(int argc, char** argv)
 {
     std::string router;
     {

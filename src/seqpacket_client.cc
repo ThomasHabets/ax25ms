@@ -32,7 +32,7 @@ namespace {
 }
 } // namespace
 
-int main(int argc, char** argv)
+int wrapmain(int argc, char** argv)
 {
     std::string router;
     std::string src;
@@ -122,4 +122,5 @@ int main(int argc, char** argv)
         return 1;
     }
     std::cerr << "Stream exit success\n";
+    return 0;
 }
