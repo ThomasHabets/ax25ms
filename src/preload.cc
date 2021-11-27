@@ -166,7 +166,6 @@ public:
 private:
     void read_thread_main();
 
-    std::jthread read_thread_;
     std::mutex read_queue_mu_;
     std::condition_variable read_queue_cv_;
     std::deque<ax25ms::SeqConnectResponse> read_queue_;
@@ -187,6 +186,10 @@ private:
         stream_;
 
     std::string src_;
+
+    // Put read_thread_ last so that all other member variables are
+    // initialized.
+    std::jthread read_thread_;
 };
 
 class Connections
@@ -288,10 +291,10 @@ ax25ms::SeqPacketService::Stub* router()
 
 
 Connection::Connection(int type, int protocol)
-    : read_thread_([this] { read_thread_main(); }),
-      fds_(make_fds()),
+    : fds_(make_fds()),
       type_(type),
-      protocol_(protocol)
+      protocol_(protocol),
+      read_thread_([this] { read_thread_main(); })
 {
 }
 

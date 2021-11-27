@@ -279,11 +279,13 @@ private:
     std::mutex serial_mu_;
     FDWrap serial_;
 
-    std::thread reader_;
-    std::thread writer_;
 
     std::mutex mu_;
     std::vector<std::weak_ptr<Queue>> queues_;
+
+    // Put threads last to make sure other members are initialized.
+    std::jthread reader_;
+    std::jthread writer_;
 };
 
 FDWrap open_serial(const std::string& port)

@@ -57,7 +57,6 @@ private:
         time_point_t timepoint; // Time it should trigger.
         cb_t cb;                // Callback on trigger.
     };
-    std::jthread thread_;
     std::mutex mu_;
     std::condition_variable cv_;
     std::map<time_point_t, std::unique_ptr<timer_t>> timers_;
@@ -66,6 +65,10 @@ private:
     bool stop_for_test_ = false;
     time_point_t time_for_test_{};
     std::atomic<bool> running_ = false;
+
+    // thread_ needs to be *last* so that it waits for everything else
+    // to be constructed.
+    std::jthread thread_;
 };
 } // namespace ax25ms
 #endif

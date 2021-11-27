@@ -29,6 +29,7 @@ Timer::~Timer()
 
 void Timer::run()
 {
+    pthread_setname_np(thread_.native_handle(), "timer");
     for (;;) {
         auto getcb = [this] {
             std::unique_lock<std::mutex> lk(mu_);
@@ -43,7 +44,7 @@ void Timer::run()
 
                 if (stop_for_test_) {
                     auto noww = now();
-                    if (noww > cur) {
+                    if (noww >= cur) {
                         break;
                     }
                     mu_.unlock();
@@ -65,11 +66,12 @@ void Timer::run()
             // Timeout has happened for the first item.
             auto first = timers_.begin();
             auto entry = std::move(first->second);
+
             timers_.erase(first);
             return entry;
         }();
         if (shutdown_) {
-            return;
+            break;
         }
         running_ = true;
         getcb->cb();
@@ -79,7 +81,11 @@ void Timer::run()
 
 void Timer::add(duration_t dur, cb_t cb)
 {
-    add(std::chrono::steady_clock::now() + dur, cb);
+    const auto t = [this, dur] {
+        std::unique_lock<std::mutex> lk(mu_);
+        return now() + dur;
+    }();
+    add(t, cb);
 }
 
 void Timer::stop_for_test() noexcept
@@ -99,7 +105,7 @@ Timer::time_point_t Timer::now()
 void Timer::drain()
 {
     for (;;) {
-        std::this_thread::sleep_for(std::chrono::milliseconds{ 100 });
+        std::this_thread::sleep_for(std::chrono::milliseconds{ 10 });
         std::unique_lock<std::mutex> lk(mu_);
         if (timers_.empty() && !running_) {
             return;
@@ -109,8 +115,30 @@ void Timer::drain()
 
 void Timer::tick_for_test(duration_t t)
 {
-    time_for_test_ = now() + t;
-    cv_.notify_all();
+    {
+        std::unique_lock<std::mutex> lk(mu_);
+        time_for_test_ = now() + t;
+        cv_.notify_all();
+    }
+
+    // Wait for all scheduled handlers to run.
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lk(mu_);
+            // Timer is running. Don't know when it was supposed to.
+            if (running_) {
+                continue;
+            }
+            // No timer left.
+            if (timers_.empty()) {
+                return;
+            }
+            // No timer left that's left to trigger.
+            if (timers_.begin()->first > now()) {
+                return;
+            }
+        }
+    }
 }
 
 void Timer::add(time_point_t tp, cb_t cb)

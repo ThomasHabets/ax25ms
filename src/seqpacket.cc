@@ -100,6 +100,11 @@ void Connection::maybe_send()
             // TODO: shouldn't this queue be sorted, so break?
             continue;
         }
+        if (++e.attempts > 3) { // TODO:tunable.
+            change_state(State::CONNECTED, State::FAILED);
+            send_queue_.clear();
+            return;
+        }
         std::unique_lock<std::mutex> lk(mu_);
         if (e.packet.has_iframe()) {
             e.packet.mutable_iframe()->set_nr(nrm());
@@ -202,6 +207,12 @@ void Connection::process_acks(const ax25::Packet& packet)
 }
 
 
+Connection::State Connection::get_state()
+{
+    std::unique_lock<std::mutex> lk(mu_);
+    return state_;
+}
+
 bool Connection::change_state(State from, State to)
 {
     std::unique_lock<std::mutex> lk(mu_);
@@ -290,7 +301,7 @@ void Connection::rr(const ax25::Packet& packet)
 }
 void Connection::iframe(const ax25::Packet& packet)
 {
-    std::clog << "iframe received: " << packet.iframe().payload() << "\n";
+    // std::clog << "iframe received: " << packet.iframe().payload() << "\n";
     process_acks(packet);
 
     std::unique_lock<std::mutex> lk(mu_);
@@ -303,6 +314,8 @@ void Connection::iframe(const ax25::Packet& packet)
         const auto st = send_rr(packet.src(), packet.dst(), nrm());
         if (!st.ok()) {
             std::cerr << "Failed to send RR: " << st.error_message() << "\n";
+        } else {
+            nr_sent_ = nr_;
         }
         return;
     }

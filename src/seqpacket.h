@@ -19,6 +19,7 @@ public:
         IDLE = 0,
         CONNECTING = 1,
         CONNECTED = 2,
+        FAILED = 3,
     };
 
 
@@ -32,6 +33,7 @@ public:
 
     struct Entry {
         ax25::Packet packet;
+        int attempts = 0;
         Timer::time_point_t next_tx;
     };
 
@@ -53,7 +55,7 @@ public:
     void connect_send(grpc::ServerContext* ctx, ax25ms::SendRequest& sreq, int retry = 0);
 
     bool change_state(State from, State to);
-
+    State get_state();
     void ua(const ax25::Packet& packet);
 
     void iframe(const ax25::Packet& packet);
