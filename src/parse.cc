@@ -157,7 +157,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
         // I frame.
 
         auto& iframe = *ret.mutable_iframe();
-        iframe.set_pid(data.at(pos++));
+        iframe.set_pid(static_cast<uint8_t>(data.at(pos++)));
         const int modulus = modulus_normal; // TODO: detect?
         if (modulus == modulus_normal) {
             iframe.set_nr((control >> 5) & 0x7);
