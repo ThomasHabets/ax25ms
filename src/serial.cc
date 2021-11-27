@@ -27,6 +27,7 @@ limitations under the License.
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <termios.h>
 #include <cstdint>
 #include <iomanip>
 #include <queue>
@@ -291,6 +292,22 @@ private:
 FDWrap open_serial(const std::string& port)
 {
     FDWrap ret(open(port.c_str(), O_RDWR | O_NOCTTY));
+    const int fd = ret.get();
+    struct termios tc;
+
+    if (tcgetattr(fd, &tc)) {
+        throw std::runtime_error("failed to get termios for " + port + ": " +
+                                 strerror(errno));
+    }
+    // cfsetospeed(&tc,B57600);
+    tc.c_cc[VMIN] = 0;
+    tc.c_cc[VTIME] = 0;
+    cfmakeraw(&tc);
+    tc.c_cflag &= ~CRTSCTS;
+    if (tcsetattr(fd, TCSANOW, &tc)) {
+        throw std::runtime_error("failed to set termios for " + port + ": " +
+                                 strerror(errno));
+    }
     return ret;
 }
 } // namespace ax25ms::serial
