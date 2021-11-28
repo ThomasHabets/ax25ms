@@ -417,10 +417,21 @@ int Connection::setsockopt(int level, int optname, const void* optval, socklen_t
         return -1;
     }
 
+    if (optlen == 0) {
+        errno = EINVAL;
+        return -1;
+    }
     switch (optname) {
-    case AX25_EXTSEQ:
+    case AX25_EXTSEQ: {
         // TODO: set it.
+        std::vector<uint8_t> zero(optlen, 0);
+        if (!memcmp(optval, zero.data(), optlen)) {
+            extseq_ = false;
+        } else {
+            extseq_ = true;
+        }
         return 0;
+    }
     case AX25_PACLEN:
         // TODO: set it.
         return 0;
@@ -454,6 +465,8 @@ int Connection::connect(const struct sockaddr* addr, socklen_t addrlen)
     ax25ms::SeqConnectRequest req;
     req.mutable_packet()->mutable_metadata()->mutable_source_address()->set_address(src_);
     req.mutable_packet()->mutable_metadata()->mutable_address()->set_address(dst);
+    req.mutable_packet()->mutable_metadata()->mutable_connection_settings()->set_extended(
+        extseq_);
     stream_ = router()->Connect(&stream_ctx_);
     if (!stream_->Write(req)) {
         std::clog << "Failed to start connect RPC: " << stream_->Finish().error_message()

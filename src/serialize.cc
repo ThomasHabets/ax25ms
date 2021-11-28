@@ -112,19 +112,38 @@ std::string serialize(const ax25::Packet& packet)
         ret.push_back(0b011'0'00'11);
     }
     if (packet.has_rr()) {
-        uint8_t control = 0b000'0'00'01;
-        control |= (packet.rr().nr() << 5) & 0b111'0'00'00;
-        ;
-        ret.push_back(control);
+        if (!packet.rr_extseq()) {
+            uint8_t control = 0b000'0'00'01;
+            control |= packet.rr().poll() ? 0b000'1'00'00 : 0;
+            control |= (packet.rr().nr() << 5) & 0b111'0'00'00;
+            ret.push_back(control);
+        } else {
+            uint8_t control1 = 0b000'0'00'01;
+            uint8_t control2 = 0;
+            control2 |= packet.rr().poll() ? 1 : 0;
+            control2 |= (packet.rr().nr() << 1) & 0xfe;
+            ret.push_back(control1);
+            ret.push_back(control2);
+        }
     }
 
     // I frames.
     if (packet.has_iframe()) {
-        uint8_t control = 0;
-        control |= packet.iframe().poll() ? 0b00010000 : 0;
-        control |= packet.iframe().nr() << 5;
-        control |= (packet.iframe().ns() << 1) & 0b00001110;
-        ret.push_back(control);
+        if (!packet.rr_extseq()) {
+            uint8_t control = 0;
+            control |= packet.iframe().poll() ? 0b00010000 : 0;
+            control |= packet.iframe().nr() << 5;
+            control |= (packet.iframe().ns() << 1) & 0b00001110;
+            ret.push_back(control);
+        } else {
+            uint8_t control1 = 0;
+            uint8_t control2 = 0;
+            control1 |= (packet.iframe().ns() << 1) & 0b11111110;
+            control2 |= packet.iframe().poll() ? 1 : 0;
+            control2 |= packet.iframe().nr() << 1;
+            ret.push_back(control1);
+            ret.push_back(control2);
+        }
         ret.append(packet.iframe().payload());
     }
     return ret;

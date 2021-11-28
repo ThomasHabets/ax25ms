@@ -45,16 +45,20 @@ constexpr int modulus_extended = 128;
 
 namespace {
 // Return call, command/response or has-been-repeated, status, done.
-std::tuple<std::string, bool, grpc::Status, bool> parse_call(const std::string& d)
+std::tuple<std::string, bool, bool, bool, grpc::Status, bool>
+parse_call(const std::string& d)
 {
     std::string call;
     for (int i = 0; i < 6; i++) {
         const char ch = (d.at(i) >> 1) & ~0x80;
         const char bit = d.at(i) & 1;
         if (bit) {
-            return {
-                "", false, grpc::Status(grpc::UNKNOWN, "callsign msb was not 0"), false
-            };
+            return { "",
+                     false,
+                     false,
+                     false,
+                     grpc::Status(grpc::UNKNOWN, "callsign msb was not 0"),
+                     false };
         }
         // std::cerr << "byte:
         if (ch != ' ') {
@@ -63,14 +67,15 @@ std::tuple<std::string, bool, grpc::Status, bool> parse_call(const std::string& 
     }
     const int ssid = (d.at(6) >> 1) & 15;
     const bool done = d.at(6) & 1;
-    // const int rr = (d.at(66) >> 5) & 0x3;
+    const bool rr1 = d.at(6) & 0b01000000;
+    const bool rr2 = d.at(6) & 0b00100000;
     const bool top_bit = d.at(6) & 0x80;
 
     if (ssid) {
         call += "-" + std::to_string(ssid);
     }
     // std::cerr << "parsed: <" << call << ">" << call.size() << "\n";
-    return { call, top_bit, grpc::Status::OK, done };
+    return { call, top_bit, rr1, rr2, grpc::Status::OK, done };
 }
 
 
@@ -113,7 +118,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
     int pos = 0;
 
     {
-        const auto [dst, top, err, done] = parse_call(data.substr(pos));
+        const auto [dst, top, rr1, rr2, err, done] = parse_call(data.substr(pos));
         if (!err.ok()) {
             return { ret, err };
         }
@@ -127,10 +132,11 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
     }
 
     // Source.
-    auto [src, top, err, done] = parse_call(data.substr(pos));
+    auto [src, top, rr1, rr2, err, done] = parse_call(data.substr(pos));
     if (!err.ok()) {
         return { ret, err };
     }
+    ret.set_rr_extseq(!rr1);
     ret.set_src(src);
     ret.set_command_response_la(top);
     pos += 7;
@@ -141,7 +147,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
     // The spec also says that paths are being phased out. But APRS
     // relies heavily on paths, so I don't see that happening.
     while (!done) {
-        const auto [digi, top, err, d] = parse_call(data.substr(pos));
+        const auto [digi, top, rr1, rr2, err, d] = parse_call(data.substr(pos));
         done = d;
         if (!err.ok()) {
             return { ret, err };
@@ -155,21 +161,20 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
 
     if ((control & 1) == 0) {
         // I frame.
-
         auto& iframe = *ret.mutable_iframe();
-        iframe.set_pid(static_cast<uint8_t>(data.at(pos++)));
-        const int modulus = modulus_normal; // TODO: detect?
-        if (modulus == modulus_normal) {
+        if (!ret.rr_extseq()) {
             iframe.set_nr((control >> 5) & 0x7);
             iframe.set_poll(control & 0b00010000);
             iframe.set_ns((control >> 1) & 0x7);
-            iframe.set_payload(data.substr(pos));
         } else {
-            // iframe.set_extended();
-            return { ret,
-                     grpc::Status(grpc::UNIMPLEMENTED,
-                                  "128-modulus frames not implemented") };
+            const uint8_t econtrol = data.at(pos++);
+            iframe.set_extended(true);
+            iframe.set_nr((econtrol >> 1) & 0x7f);
+            iframe.set_poll(econtrol & 1);
+            iframe.set_ns((control >> 1) & 0x7f);
         }
+        iframe.set_pid(static_cast<uint8_t>(data.at(pos++)));
+        iframe.set_payload(data.substr(pos));
         return { ret, grpc::Status::OK };
 
     } else if ((control & 3) == 1) {

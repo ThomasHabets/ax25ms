@@ -13,7 +13,8 @@ public:
     Connection(std::string_view mycall,
                std::string_view peer,
                ax25ms::RouterService::Stub* router,
-               Timer* scheduler);
+               Timer* scheduler,
+               bool extended);
 
     enum class State {
         IDLE = 0,
@@ -83,7 +84,7 @@ private:
     static constexpr int normal_modulus = 8;
     static constexpr int extended_modulus = 128;
 
-    const int modulus_ = normal_modulus;
+    const int modulus_;
     int window_size_ = 4; // TODO: what to default to?
     int64_t nr_ = 0;      // expected next packet.
     int64_t nr_sent_ = 0; // Last nc that was sent.

@@ -82,8 +82,13 @@ constexpr int default_n2 = 3;
 Connection::Connection(std::string_view mycall,
                        std::string_view peer,
                        ax25ms::RouterService::Stub* router,
-                       Timer* scheduler)
-    : router_(router), scheduler_(scheduler), mycall_(mycall), peer_(peer)
+                       Timer* scheduler,
+                       bool extended)
+    : router_(router),
+      scheduler_(scheduler),
+      mycall_(mycall),
+      peer_(peer),
+      modulus_(extended ? extended_modulus : normal_modulus)
 {
 }
 
@@ -141,9 +146,13 @@ grpc::Status Connection::connect(grpc::ServerContext* ctx)
     ax25::Packet packet;
     packet.set_src(mycall_);
     packet.set_dst(peer_);
-    packet.mutable_sabm()->set_poll(true);
-    packet.set_command_response(true);
+    if (modulus_ == extended_modulus) {
+        packet.mutable_sabme()->set_poll(true);
+    } else {
+        packet.mutable_sabm()->set_poll(true);
+    }
     packet.set_rr_extseq(modulus_ == extended_modulus);
+    packet.set_command_response(true);
     const auto data = ax25::serialize(packet);
 
     ax25ms::SendRequest sreq;
@@ -176,6 +185,7 @@ grpc::Status Connection::send_rr(std::string_view dst, std::string_view src, int
     ack.set_dst(dst.data(), dst.size());
     ack.mutable_rr()->set_nr(n);
     ack.mutable_rr()->set_poll(true);
+    ack.set_rr_extseq(modulus_ == extended_modulus);
     const auto data = ax25::serialize(ack);
     ax25ms::SendRequest sreq;
     sreq.mutable_frame()->set_payload(data);
@@ -193,8 +203,9 @@ void Connection::process_acks(const ax25::Packet& packet)
     } else if (packet.has_rr()) {
         nr = packet.rr().nr();
     } else {
-        return;
+        throw std::runtime_error("process_acks() called without iframe or rr type");
     }
+    std::clog << "Acking with nr " << nr << "\n";
     std::unique_lock<std::mutex> lk(send_mu_);
     while (!send_queue_.empty()) {
         const auto ns = send_queue_.front().packet.iframe().ns();
@@ -358,12 +369,13 @@ grpc::Status Connection::write(std::string_view payload)
     ax25::Packet packet;
     packet.set_src(mycall_);
     packet.set_dst(peer_);
-    auto iframe = packet.mutable_iframe();
-    iframe->set_extended(modulus_ == extended_modulus);
-    iframe->set_payload("\xF0" + std::string(payload));
+    auto& iframe = *packet.mutable_iframe();
+
+    packet.set_rr_extseq(modulus_ == normal_modulus);
+    iframe.set_payload("\xF0" + std::string(payload));
+    iframe.set_ns(nsm());
 
     std::unique_lock<std::mutex> lk(send_mu_);
-    packet.mutable_iframe()->set_ns(nsm());
     ns_++;
     send_queue_.push_back(Entry{
         .packet = std::move(packet),
@@ -446,7 +458,12 @@ public:
         const auto dst = req.packet().metadata().address().address();
         const auto src = req.packet().metadata().source_address().address();
 
-        auto conu = std::make_unique<Connection>(src, dst, router_, &scheduler_);
+        auto conu = std::make_unique<Connection>(
+            src,
+            dst,
+            router_,
+            &scheduler_,
+            req.packet().metadata().connection_settings().extended());
         auto& con = *conu;
         connections_[{ src, dst }] = std::move(conu);
         const auto status = con.connect(ctx);
