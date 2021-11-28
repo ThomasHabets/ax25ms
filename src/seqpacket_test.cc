@@ -293,7 +293,7 @@ void ConnectionTest::test_receive(FakeRouter& srv,
     assert(con.nsm() == 0);
     assert(srv.received_.empty());
 
-    // Receive dup.
+    // Receive dup, send REJ.
     std::cout << "  Receive third packet (dup)\n";
     timer.tick_for_test(std::chrono::milliseconds{ 100 });
     con.iframe(packet_iframe(false, 0, 2, true, false, "of dups"));
@@ -304,6 +304,15 @@ void ConnectionTest::test_receive(FakeRouter& srv,
     srv.received_.clear();
     assert(con.state_ == Connection::State::CONNECTED);
 
+    // Receive another dup. Hold off on the REJ.
+    std::cout << "  Receive fourth packet (dup)\n";
+    timer.tick_for_test(std::chrono::milliseconds{ 100 });
+    con.iframe(packet_iframe(false, 0, 2, true, false, "of dups"));
+    assert(con.nrm() == 3);
+    assert(con.nsm() == 0);
+    assert(srv.received_.empty());
+    assert(con.state_ == Connection::State::CONNECTED);
+
     timer.tick_for_test(std::chrono::seconds{ 3600 });
 }
 
@@ -312,10 +321,11 @@ void ConnectionTest::test_receive(FakeRouter& srv,
 
 int main()
 {
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 10; i++) {
         std::cerr << "======================\n";
         ConnectionTest test;
         test.run();
         // sleep(1);
     }
+    std::cout << "======== Success ============\n";
 }
