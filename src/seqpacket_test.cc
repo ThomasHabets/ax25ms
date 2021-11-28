@@ -97,6 +97,14 @@ ax25::Packet packet_rr(bool cli, int nr)
     return p;
 }
 
+ax25::Packet packet_rej(bool cli, int nr)
+{
+    auto p = packet_base(cli, false);
+    p.mutable_rej()->set_nr(nr);
+    p.mutable_rej()->set_poll(true);
+    return p;
+}
+
 ax25::Packet packet_sabm(bool cli)
 {
     auto p = packet_base(cli, true);
@@ -291,8 +299,8 @@ void ConnectionTest::test_receive(FakeRouter& srv,
     con.iframe(packet_iframe(false, 0, 2, true, false, "of dups"));
     assert(con.nrm() == 3);
     assert(con.nsm() == 0);
-    // assert(srv.received_.size() == 1); TODO: this REJ is a bit unstable, but check for
-    // it.
+    assert(srv.received_.size() == 1);
+    assert_eq(srv.received_[0], packet_rej(true, 3));
     srv.received_.clear();
     assert(con.state_ == Connection::State::CONNECTED);
 

@@ -93,6 +93,7 @@ private:
     int64_t nr_sent_ = 0;     // Last nc that was sent.
     int64_t nr_rr_clear_ = 0; // Skip sending any RR lower than this number.
     int64_t ns_ = 0;          // next sequence number to send.
+    Timer::time_point_t last_rej_{};
 
     // call with lock held.
     int nrm() const noexcept { return nr_ % modulus_; }

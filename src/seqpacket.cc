@@ -223,13 +223,12 @@ grpc::Status Connection::send_rej(std::string_view dst, std::string_view src, in
 {
     {
         std::unique_lock<std::mutex> lk(mu_);
-        static auto prev = scheduler_->now();
-        auto now = scheduler_->now();
-        if ((prev != now) && ((now - prev) < std::chrono::seconds{ 1 })) {
+        const auto now = scheduler_->now();
+        if ((last_rej_ != now) && ((now - last_rej_) < std::chrono::seconds{ 1 })) {
             // Skip sending too often.
             return grpc::Status::OK;
         }
-        prev = now;
+        last_rej_ = now;
     }
     ax25::Packet ack;
     ack.set_src(src.data(), src.size());
