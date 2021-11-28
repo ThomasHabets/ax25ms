@@ -118,6 +118,7 @@ void Connection::maybe_send()
         e.packet.set_rr_extseq(modulus_ == extended_modulus);
         const auto data = ax25::serialize(e.packet);
 
+        // std::cerr << "Sending RR packet with NR " << nrm() << "\n";
         ax25ms::SendRequest sreq;
         sreq.mutable_frame()->set_payload(data);
         ax25ms::SendResponse resp;
@@ -129,6 +130,7 @@ void Connection::maybe_send()
             send_queue_.clear();
         } else {
             nr_sent_ = nr_;
+            nr_rr_clear_ = nr_;
             e.next_tx = scheduler_->now() + default_t1;
         }
     }
@@ -196,6 +198,16 @@ grpc::Status Connection::send_rr(std::string_view dst, std::string_view src, int
 
 grpc::Status Connection::send_rej(std::string_view dst, std::string_view src, int n)
 {
+    {
+        std::unique_lock<std::mutex> lk(mu_);
+        static auto prev = scheduler_->now();
+        auto now = scheduler_->now();
+        if ((prev != now) && ((now - prev) < std::chrono::seconds{ 1 })) {
+            // Skip sending too often.
+            return grpc::Status::OK;
+        }
+        prev = now;
+    }
     ax25::Packet ack;
     ack.set_src(src.data(), src.size());
     ack.set_dst(dst.data(), dst.size());
@@ -208,6 +220,7 @@ grpc::Status Connection::send_rej(std::string_view dst, std::string_view src, in
     sreq.mutable_frame()->set_payload(data);
     ax25ms::SendResponse resp;
     grpc::ClientContext ctx;
+
     return router_->Send(&ctx, sreq, &resp);
 }
 
@@ -219,8 +232,10 @@ void Connection::process_acks(const ax25::Packet& packet)
         nr = packet.iframe().nr();
     } else if (packet.has_rr()) {
         nr = packet.rr().nr();
+    } else if (packet.has_rej()) {
+        nr = packet.rej().nr();
     } else {
-        throw std::runtime_error("process_acks() called without iframe or rr type");
+        throw std::runtime_error("process_acks() called without iframe/rr/rej type");
     }
     std::clog << "Acking with nr " << nr << "\n";
     std::unique_lock<std::mutex> lk(send_mu_);
@@ -326,6 +341,14 @@ void Connection::rr(const ax25::Packet& packet)
     assert(packet.has_rr());
     std::clog << "RR received\n";
     process_acks(packet);
+    if (packet.command_response()) {
+        const auto nr = [this] {
+            std::unique_lock<std::mutex> lk(mu_);
+            return nr_;
+        }();
+        // TODO: is REJ the right response to an RR?
+        send_rej(packet.src(), packet.dst(), nr);
+    }
 }
 void Connection::iframe(const ax25::Packet& packet)
 {
@@ -354,7 +377,8 @@ void Connection::iframe(const ax25::Packet& packet)
     cv_.notify_all();
 
     // Schedule an ACK.
-    scheduler_->add(default_t2, [this, src = packet.src(), dst = packet.dst()] {
+    nr_rr_clear_ = packet.iframe().ns();
+    scheduler_->add(default_t2, [this, packet] {
         {
             std::unique_lock<std::mutex> lk(send_mu_);
             if (!send_queue_.empty()) {
@@ -368,9 +392,12 @@ void Connection::iframe(const ax25::Packet& packet)
         if (nr_sent_ >= nr_) {
             return;
         }
-
+        if (nr_rr_clear_ > packet.iframe().ns()) {
+            return;
+        }
+        // std::clog << "Sending RR because " << nr_rr_clear_ << " " << nr_ << "\n";
         // Send RR packet.
-        const auto st = send_rr(src, dst, nrm());
+        const auto st = send_rr(packet.src(), packet.dst(), nrm());
         if (!st.ok()) {
             std::cerr << "Failed to send RR: " << st.error_message() << "\n";
         } else {

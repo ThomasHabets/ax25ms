@@ -29,14 +29,21 @@ pybind11 or SWIG.
 
 ## State of the code
 
-It's pretty messy. What I aim to get working is this:
+It's pretty messy. The packet scheduler needs to be written
+"properly", I'd say.
+
+Still, I can't say it's more buggy than the Linux kernel
+implementation. E.g. you can DoS the kernel version by building up a
+window and them spamming REJ. You can send 10 REJs and the kernel
+implementation will re-send the whole window 10 times.
+
+[axsh][axsh] works on the client side.
 
 ```
  tnc <KISS> serial <gRPC> seqpacket <gRPC> ax25ms_axsh
 ```
 
-Then I'll be able to port [axsh][axsh] to use this interface instead of
-kernel-based sockets.
+Next up: Server side sockets (The `Accept` RPC).
 
 
 [rfc1226]: https://datatracker.ietf.org/doc/html/rfc1226

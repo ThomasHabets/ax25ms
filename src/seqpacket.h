@@ -85,10 +85,11 @@ private:
     static constexpr int extended_modulus = 128;
 
     const int modulus_;
-    int window_size_ = 4; // TODO: what to default to?
-    int64_t nr_ = 0;      // expected next packet.
-    int64_t nr_sent_ = 0; // Last nc that was sent.
-    int64_t ns_ = 0;      // next sequence number to send.
+    int window_size_ = 4;     // TODO: what to default to?
+    int64_t nr_ = 0;          // expected next packet.
+    int64_t nr_sent_ = 0;     // Last nc that was sent.
+    int64_t nr_rr_clear_ = 0; // Skip sending any RR lower than this number.
+    int64_t ns_ = 0;          // next sequence number to send.
 
     // call with lock held.
     int nrm() const noexcept { return nr_ % modulus_; }
