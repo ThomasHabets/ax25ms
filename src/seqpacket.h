@@ -97,6 +97,7 @@ private:
     ax25ms::SeqMetadata metadata_;
 
     grpc::Status send_rr(std::string_view dst, std::string_view src, int n);
+    grpc::Status send_rej(std::string_view dst, std::string_view src, int n);
 
     friend class ConnectionTest;
 };

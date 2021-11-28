@@ -194,6 +194,23 @@ grpc::Status Connection::send_rr(std::string_view dst, std::string_view src, int
     return router_->Send(&ctx, sreq, &resp);
 }
 
+grpc::Status Connection::send_rej(std::string_view dst, std::string_view src, int n)
+{
+    ax25::Packet ack;
+    ack.set_src(src.data(), src.size());
+    ack.set_dst(dst.data(), dst.size());
+    ack.mutable_rej()->set_nr(n);
+    ack.mutable_rej()->set_poll(true);
+    ack.set_rr_extseq(modulus_ == extended_modulus);
+
+    const auto data = ax25::serialize(ack);
+    ax25ms::SendRequest sreq;
+    sreq.mutable_frame()->set_payload(data);
+    ax25ms::SendResponse resp;
+    grpc::ClientContext ctx;
+    return router_->Send(&ctx, sreq, &resp);
+}
+
 void Connection::process_acks(const ax25::Packet& packet)
 {
     // Remove acked packets from send queue.
@@ -321,10 +338,9 @@ void Connection::iframe(const ax25::Packet& packet)
     if (nrm() != packet.iframe().ns()) {
         std::cerr << "Got packet out of order: got " << packet.iframe().ns() << " want "
                   << nrm() << "\n";
-        // Enqueue RR packet.
-        const auto st = send_rr(packet.src(), packet.dst(), nrm());
+        const auto st = send_rej(packet.src(), packet.dst(), nrm());
         if (!st.ok()) {
-            std::cerr << "Failed to send RR: " << st.error_message() << "\n";
+            std::cerr << "Failed to send REJ: " << st.error_message() << "\n";
         } else {
             nr_sent_ = nr_;
         }

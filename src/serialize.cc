@@ -126,6 +126,21 @@ std::string serialize(const ax25::Packet& packet)
             ret.push_back(control2);
         }
     }
+    if (packet.has_rej()) {
+        if (!packet.rr_extseq()) {
+            uint8_t control = 0b000'0'10'01;
+            control |= packet.rej().poll() ? 0b000'1'00'00 : 0;
+            control |= (packet.rej().nr() << 5) & 0b111'0'00'00;
+            ret.push_back(control);
+        } else {
+            uint8_t control1 = 0b000'0'10'01;
+            uint8_t control2 = 0;
+            control2 |= packet.rej().poll() ? 1 : 0;
+            control2 |= (packet.rej().nr() << 1) & 0xfe;
+            ret.push_back(control1);
+            ret.push_back(control2);
+        }
+    }
 
     // I frames.
     if (packet.has_iframe()) {
