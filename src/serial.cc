@@ -25,6 +25,7 @@ limitations under the License.
 #include "util.h"
 #include <condition_variable>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <termios.h>
@@ -291,10 +292,20 @@ private:
 
 FDWrap open_serial(const std::string& port)
 {
-    FDWrap ret(open(port.c_str(), O_RDWR | O_NOCTTY));
-    const int fd = ret.get();
-    struct termios tc;
+    const int fd = open(port.c_str(), O_RDWR | O_NOCTTY);
+    if (fd == -1) {
+        throw std::runtime_error("failed to open " + port + ": " + strerror(errno));
+    }
+    FDWrap ret(fd);
 
+    // Set exclusive mode.
+    if (ioctl(fd, TIOCEXCL, nullptr, 0)) {
+        throw std::runtime_error("failed to set TIOCEXCL for " + port + ": " +
+                                 strerror(errno));
+    }
+
+    // Set serial attributes.
+    struct termios tc;
     if (tcgetattr(fd, &tc)) {
         throw std::runtime_error("failed to get termios for " + port + ": " +
                                  strerror(errno));
@@ -303,7 +314,7 @@ FDWrap open_serial(const std::string& port)
     tc.c_cc[VMIN] = 0;
     tc.c_cc[VTIME] = 0;
     cfmakeraw(&tc);
-    tc.c_cflag &= ~CRTSCTS;
+    tc.c_cflag &= ~CRTSCTS; // Turn off hardware flow control.
     if (tcsetattr(fd, TCSANOW, &tc)) {
         throw std::runtime_error("failed to set termios for " + port + ": " +
                                  strerror(errno));
