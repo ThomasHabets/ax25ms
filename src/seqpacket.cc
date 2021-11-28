@@ -180,6 +180,28 @@ void Connection::ua(const ax25::Packet& packet)
     // TODO: what about other states?
 }
 
+void Connection::sabm(const ax25::Packet& packet)
+{
+    std::clog << "Received SABM\n";
+    ax25::Packet ua;
+    ua.mutable_ua();
+    ua.set_src(packet.dst());
+    ua.set_dst(packet.src());
+
+    const auto data = ax25::serialize(ua);
+    ax25ms::SendRequest sreq;
+    sreq.mutable_frame()->set_payload(data);
+    ax25ms::SendResponse resp;
+    grpc::ClientContext ctx;
+    const auto st = router_->Send(&ctx, sreq, &resp);
+    if (!st.ok()) {
+        std::cerr << "failed to send UA: " << st.error_message() << "\n";
+        return;
+    }
+    peer_ = packet.src();
+    change_state(State::ACCEPTING, State::CONNECTED);
+}
+
 grpc::Status Connection::send_rr(std::string_view dst, std::string_view src, int n)
 {
     ax25::Packet ack;
@@ -188,6 +210,7 @@ grpc::Status Connection::send_rr(std::string_view dst, std::string_view src, int
     ack.mutable_rr()->set_nr(n);
     ack.mutable_rr()->set_poll(true);
     ack.set_rr_extseq(modulus_ == extended_modulus);
+
     const auto data = ax25::serialize(ack);
     ax25ms::SendRequest sreq;
     sreq.mutable_frame()->set_payload(data);
@@ -267,6 +290,14 @@ bool Connection::change_state(State from, State to)
     state_ = to;
     cv_.notify_all();
     return true;
+}
+
+Connection::State Connection::wait_state_change()
+{
+    std::unique_lock<std::mutex> lk(mu_);
+    const auto old = state_;
+    cv_.wait(lk, [this, old] { return state_ != old; });
+    return state_;
 }
 
 void Connection::connect_send(grpc::ServerContext* ctx,
@@ -355,10 +386,12 @@ void Connection::iframe(const ax25::Packet& packet)
     // std::clog << "iframe received: " << packet.iframe().payload() << "\n";
     process_acks(packet);
 
-    std::unique_lock<std::mutex> lk(mu_);
-
+    const int nr = [this] {
+        std::unique_lock<std::mutex> lk(mu_);
+        return nr_;
+    }();
     // If packet is out of order, drop it. TODO: selective.
-    if (nrm() != packet.iframe().ns()) {
+    if (nr != packet.iframe().ns()) {
         std::cerr << "Got packet out of order: got " << packet.iframe().ns() << " want "
                   << nrm() << "\n";
         const auto st = send_rej(packet.src(), packet.dst(), nrm());
@@ -369,6 +402,7 @@ void Connection::iframe(const ax25::Packet& packet)
         }
         return;
     }
+    std::unique_lock<std::mutex> lk(mu_);
     nr_++;
 
     // Put in the receive queue.
@@ -444,8 +478,12 @@ public:
         // TODO: slightly cleaner to not do lookup on packets that are not seqpackets.
         auto connitr = connections_.find({ packet.dst(), packet.src() });
         if (connitr == connections_.end()) {
-            std::cerr << "Unknown connection\n";
-            return;
+            connitr = connections_.find({ packet.dst(), "" });
+            if (connitr == connections_.end()) {
+                std::cerr << "Unknown connection src=" << packet.src()
+                          << " dst=" << packet.dst() << "\n";
+                return;
+            }
         }
         auto& conn = connitr->second;
         if (packet.has_ua()) {
@@ -456,6 +494,8 @@ public:
             conn->rr(packet);
         } else if (packet.has_disc()) {
             conn->disc(packet);
+        } else if (packet.has_sabm()) {
+            conn->sabm(packet);
         } else {
             // Not a seqpacket-related frame.
             std::cerr << "Not a seqpacket-related frame:\n"
@@ -482,6 +522,89 @@ public:
         }
         return grpc::Status(grpc::INTERNAL, "exception");
     }
+    grpc::Status
+    Accept(grpc::ServerContext* ctx,
+           grpc::ServerReaderWriter<ax25ms::SeqAcceptResponse, ax25ms::SeqAcceptRequest>*
+               stream) override
+    {
+        try {
+            return Accept2(ctx, stream);
+        } catch (const std::exception& e) {
+            std::cerr << "Accept() exception: " << e.what() << "\n";
+        } catch (...) {
+            std::cerr << "Accept() unknown exception\n";
+        }
+        return grpc::Status(grpc::INTERNAL, "exception");
+    }
+
+    grpc::Status Accept2(grpc::ServerContext* ctx,
+                         grpc::ServerReaderWriter<ax25ms::SeqAcceptResponse,
+                                                  ax25ms::SeqAcceptRequest>* stream)
+    {
+        std::clog << "Accept2()\n";
+        ax25ms::SeqAcceptRequest req;
+        if (!stream->Read(&req)) {
+            return grpc::Status(grpc::INVALID_ARGUMENT, "no initial data received");
+        }
+        if (!req.has_packet()) {
+            return grpc::Status(grpc::INVALID_ARGUMENT, "initial burst had no packet");
+        }
+        if (!req.packet().has_metadata()) {
+            return grpc::Status(grpc::INVALID_ARGUMENT, "initial burst had no metadata");
+        }
+        const auto dst = req.packet().metadata().address().address();
+        const auto src = req.packet().metadata().source_address().address();
+
+        auto conu = std::make_unique<Connection>(
+            src,
+            dst,
+            router_,
+            &scheduler_,
+            req.packet().metadata().connection_settings().extended());
+        auto& con = *conu;
+        con.change_state(Connection::State::IDLE, Connection::State::ACCEPTING);
+        connections_[{ src, dst }] = std::move(conu);
+        auto state = con.wait_state_change();
+        if (state != Connection::State::CONNECTED) {
+            return grpc::Status(grpc::UNKNOWN, "accept failed");
+        }
+
+        std::clog << "Connection accepted!\n";
+
+        // Send connection metadata
+        {
+            ax25ms::SeqAcceptResponse metadata;
+            if (!stream->Write(metadata)) {
+                std::cerr << "Failed to write to stream\n";
+                return grpc::Status(grpc::UNKNOWN,
+                                    "failed to inform client that we were successful");
+            }
+        }
+
+        // Start receiving.
+        std::jthread receive_thread([&con, stream] {
+            for (;;) {
+                auto [payload, st] = con.read();
+                if (!st.ok()) {
+                    return;
+                }
+                // std::clog << "SENDING ON STREAM: " << payload << "\n";
+                ax25ms::SeqAcceptResponse data;
+                data.mutable_packet()->set_payload(payload);
+                if (!stream->Write(data)) {
+                    std::cerr << "Failed to write to stream\n";
+                    return;
+                }
+            }
+        });
+        while (stream->Read(&req)) {
+            con.write(req.packet().payload());
+        }
+        std::clog << "Accept connection ended\n";
+        return con.disconnect();
+        return grpc::Status::OK;
+    }
+
     grpc::Status Connect2(grpc::ServerContext* ctx,
                           grpc::ServerReaderWriter<ax25ms::SeqConnectResponse,
                                                    ax25ms::SeqConnectRequest>* stream)

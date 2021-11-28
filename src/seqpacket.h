@@ -21,6 +21,7 @@ public:
         CONNECTING = 1,
         CONNECTED = 2,
         FAILED = 3,
+        ACCEPTING = 4,
     };
 
 
@@ -57,6 +58,8 @@ public:
 
     bool change_state(State from, State to);
     State get_state();
+    State wait_state_change();
+    void sabm(const ax25::Packet& packet);
     void ua(const ax25::Packet& packet);
 
     void iframe(const ax25::Packet& packet);
