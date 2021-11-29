@@ -45,6 +45,34 @@ implementation will re-send the whole window 10 times.
 
 Next up: Server side sockets (The `Accept` RPC).
 
+## How to test it
+
+If you have an existing program that uses `AX25_SEQPACKET`, and a TNC on a serial
+port (e.g. one created by direwolf), then you should be able to start the setup using
+something like:
+
+### Start the serial port interface
+
+For my Kenwood TH-D74 via bluetooth, this is:
+
+```
+$ ./serial -p /dev/rfcomm0 -l '[::]:12001'
+```
+
+### Start the seqpacket daemon, using the serial service as a "router"
+
+```
+$ ./seqpacket -r localhost:12001 -l '[::]:12002'
+```
+
+### Run your program using libpreload
+
+```
+$ export AX25_ADDR=M0XXX-1        # Address used by the interface.
+$ export AX25_ROUTER=localhost:12002  # seqpacket service location
+$ LD_PRELOAD=$(pwd)/libpreload.so axsh -r radio -s M0XXX-9 2E0XXX-3
+```
+
 
 [rfc1226]: https://datatracker.ietf.org/doc/html/rfc1226
 [axsh]: https://github.com/ThomasHabets/radiostuff/tree/master/ax25/axsh
