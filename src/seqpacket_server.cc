@@ -117,7 +117,7 @@ int wrapmain(int argc, char** argv)
     const auto st = stream->Finish();
     if (!st.ok()) {
         std::cerr << "Streaming failed: " << st.error_message() << "\n";
-        return 1;
+        exit(1);
     }
     std::cerr << "Stream exit success\n";
     return 0;

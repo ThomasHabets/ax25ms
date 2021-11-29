@@ -65,7 +65,7 @@ public:
     void iframe(const ax25::Packet& packet);
     void rr(const ax25::Packet& packet);
 
-    void disc(const ax25::Packet& packet) { std::clog << "disc\n"; }
+    void disc(const ax25::Packet& packet);
 
     void process_acks(const ax25::Packet& packet);
 

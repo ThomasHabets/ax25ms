@@ -180,6 +180,7 @@ void Connection::ua(const ax25::Packet& packet)
     // TODO: what about other states?
 }
 
+// TODO: support SABME.
 void Connection::sabm(const ax25::Packet& packet)
 {
     std::clog << "Received SABM\n";
@@ -201,6 +202,29 @@ void Connection::sabm(const ax25::Packet& packet)
     peer_ = packet.src();
     change_state(State::ACCEPTING, State::CONNECTED);
 }
+
+void Connection::disc(const ax25::Packet& packet)
+{
+    std::clog << "Received DISC\n";
+    ax25::Packet ua;
+    ua.mutable_ua();
+    ua.set_src(packet.dst());
+    ua.set_dst(packet.src());
+
+    const auto data = ax25::serialize(ua);
+    ax25ms::SendRequest sreq;
+    sreq.mutable_frame()->set_payload(data);
+    ax25ms::SendResponse resp;
+    grpc::ClientContext ctx;
+    const auto st = router_->Send(&ctx, sreq, &resp);
+    if (!st.ok()) {
+        std::cerr << "Failed to send UA: " << st.error_message() << "\n";
+        return;
+    }
+    peer_ = packet.src();
+    change_state(State::CONNECTED, State::IDLE);
+}
+
 
 grpc::Status Connection::send_rr(std::string_view dst, std::string_view src, int n)
 {
@@ -332,6 +356,7 @@ void Connection::connect_send(grpc::ServerContext* ctx,
 
 grpc::Status Connection::disconnect()
 {
+    std::clog << "Disconnecting…\n";
     ax25::Packet packet;
     packet.set_src(mycall_);
     packet.set_dst(peer_);
@@ -493,6 +518,7 @@ public:
             conn->rr(packet);
         } else if (packet.has_disc()) {
             conn->disc(packet);
+            // TODO: report connection down.
         } else if (packet.has_sabm()) {
             conn->sabm(packet);
         } else {
@@ -562,7 +588,10 @@ public:
             req.packet().metadata().connection_settings().extended());
         auto& con = *conu;
         con.change_state(Connection::State::IDLE, Connection::State::ACCEPTING);
-        connections_[{ src, dst }] = std::move(conu);
+        {
+            std::unique_lock<std::mutex> lk(mu_);
+            connections_[{ src, dst }] = std::move(conu);
+        }
         auto state = con.wait_state_change();
         if (state != Connection::State::CONNECTED) {
             return grpc::Status(grpc::UNKNOWN, "accept failed");
@@ -581,11 +610,11 @@ public:
         }
 
         // Start receiving.
-        std::jthread receive_thread([&con, stream] {
+        std::jthread receive_thread([ctx, &con, stream] {
             for (;;) {
                 auto [payload, st] = con.read();
                 if (!st.ok()) {
-                    return;
+                    break;
                 }
                 // std::clog << "SENDING ON STREAM: " << payload << "\n";
                 ax25ms::SeqAcceptResponse data;
@@ -595,13 +624,18 @@ public:
                     return;
                 }
             }
+            ctx->TryCancel(); // TODO: defer this.
         });
         while (stream->Read(&req)) {
             con.write(req.packet().payload());
         }
         std::clog << "Accept connection ended\n";
-        return con.disconnect();
-        return grpc::Status::OK;
+        const auto ret = con.disconnect();
+        {
+            std::unique_lock<std::mutex> lk(mu_);
+            connections_.erase({ src, dst });
+        }
+        return ret;
     }
 
     grpc::Status Connect2(grpc::ServerContext* ctx,
@@ -629,8 +663,12 @@ public:
             router_,
             &scheduler_,
             req.packet().metadata().connection_settings().extended());
-        auto& con = *conu;
-        connections_[{ src, dst }] = std::move(conu);
+        auto& con = *([this, &conu, &src, &dst] {
+            std::unique_lock<std::mutex> lk(mu_);
+            auto [itr, ok] = connections_.insert({ { src, dst }, std::move(conu) });
+            assert(ok);
+            return itr->second.get();
+        }());
         const auto status = con.connect(ctx);
         if (!status.ok()) {
             std::clog << "Connection timed out, returning error on stream\n";
@@ -649,11 +687,11 @@ public:
         }
 
         // Start receiving.
-        std::jthread receive_thread([&con, stream] {
+        std::jthread receive_thread([ctx, &con, stream] {
             for (;;) {
                 auto [payload, st] = con.read();
                 if (!st.ok()) {
-                    return;
+                    break;
                 }
                 // std::clog << "SENDING ON STREAM: " << payload << "\n";
                 ax25ms::SeqConnectResponse data;
@@ -663,18 +701,24 @@ public:
                     return;
                 }
             }
+            ctx->TryCancel();
         });
         while (stream->Read(&req)) {
             con.write(req.packet().payload());
         }
         std::clog << "Connection ended\n";
-        return con.disconnect();
-        return grpc::Status::OK;
+        const auto ret = con.disconnect();
+        {
+            std::unique_lock<std::mutex> lk(mu_);
+            connections_.erase({ src, dst });
+        }
+        return ret;
     }
 
 private:
     Timer scheduler_;
     ax25ms::RouterService::Stub* router_;
+    std::mutex mu_;
     std::map<std::pair<std::string, std::string>, std::unique_ptr<Connection>>
         connections_;
 };
