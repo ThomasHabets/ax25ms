@@ -68,6 +68,7 @@ proto/gen/api.pb.cc
 seqpacket_SOURCES=\
 src/main.cc \
 src/seqpacket.cc \
+src/seqpacket_con.cc \
 src/serialize.cc \
 src/parse.cc \
 src/scheduler.cc \
