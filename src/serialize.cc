@@ -79,10 +79,10 @@ std::string serialize(const ax25::Packet& packet)
                           packet.rr_dst1(),          // Not used?
                           false);                    // Possibly DAMA?
     ret += serialize_call(packet.src(),
-                          packet.repeater().empty(), // Maybe last.
-                          false,                     // Not used?
-                          packet.rr_extseq(),        // De facto extseq
-                          false);                    // DAMA?
+                          packet.repeater().empty(),    // Maybe last.
+                          packet.command_response_la(), // Inverse of Command/Response.
+                          packet.rr_extseq(),           // De facto extseq
+                          false);                       // DAMA?
     for (int i = 0; i < packet.repeater_size(); i++) {
         ret += serialize_call(packet.repeater(i).address(),
                               i == packet.repeater_size() - 1, // Maybe last.
@@ -159,6 +159,8 @@ std::string serialize(const ax25::Packet& packet)
             ret.push_back(control1);
             ret.push_back(control2);
         }
+        uint8_t pid = packet.iframe().pid();
+        ret.push_back(pid);
         ret.append(packet.iframe().payload());
     }
     return ret;
