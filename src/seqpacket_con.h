@@ -199,7 +199,7 @@ protected:
     void send_sabme(bool poll);
     void send_ua(bool poll);
     void send_dm(bool poll);
-    void send_rr(bool poll, int nr);
+    void send_rr(bool poll, int nr, bool command);
     void send_rnr(bool poll, int nr);
     void send_rej(bool poll, int nr);
     void send_srej(bool poll, int nr);

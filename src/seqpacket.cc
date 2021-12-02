@@ -391,7 +391,9 @@ public:
             auto conu = std::make_unique<ConnEntry>(fs);
             std::unique_lock<std::mutex> lk(mu_);
             auto [itr, ok] = connections_.insert({ { src, dst }, std::move(conu) });
-            assert(ok);
+            if (!ok) {
+                throw std::runtime_error("Failed to insert connection. Duplicate?");
+            }
             return itr->second.get();
         }());
 
