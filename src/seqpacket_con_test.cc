@@ -43,22 +43,15 @@ ax25::Packet packet_base(bool cli, bool cr)
         p.set_dst(client);
     }
     p.set_command_response(cr);
+    p.set_command_response_la(!cr);
     return p;
 }
 
-ax25::Packet packet_rr(bool cli, int nr)
+ax25::Packet packet_rr(bool cli, int nr, bool pf, int cr)
 {
-    auto p = packet_base(cli, false);
+    auto p = packet_base(cli, cr);
     p.mutable_rr()->set_nr(nr);
-    p.mutable_rr()->set_poll(true);
-    return p;
-}
-
-ax25::Packet packet_rej(bool cli, int nr)
-{
-    auto p = packet_base(cli, false);
-    p.mutable_rej()->set_nr(nr);
-    p.mutable_rej()->set_poll(true);
+    p.mutable_rr()->set_poll(pf);
     return p;
 }
 
@@ -146,7 +139,7 @@ void test_server()
     std::cout << "Ticking timer: " << con.data().t1.running() << "\n";
     con.timer1_tick();
     assert(sent.size() == 1);
-    assert_eq(sent[0], packet_rr(false, 2));
+    assert_eq(sent[0], packet_rr(false, 2, true, false));
     sent.clear();
 
     std::cout << "Send data…\n";
@@ -205,7 +198,43 @@ void test_client()
     {
         con.ua(packet_ua(false, true));
     }
-    assert(sent.size() == 0);
+    assert(sent.empty());
+    sent.clear();
+
+    std::cout << "--- Send data1…\n";
+    con.dl_data("hello");
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_iframe(false, 0, 0, false, true, "hello"));
+    sent.clear();
+
+    std::cout << "--- Send data2…\n";
+    con.dl_data("big");
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_iframe(false, 0, 1, false, true, "big"));
+    sent.clear();
+
+    std::cout << "--- Send data3…\n";
+    con.dl_data("world");
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_iframe(false, 0, 2, false, true, "world"));
+    sent.clear();
+
+    std::cout << "--- Put into timer recovery…\n";
+    con.timer1_tick();
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_rr(false, 0, true, true));
+    sent.clear();
+
+    std::cout << "--- Tester replies that it only got first packet…\n";
+    con.rr(packet_rr(false, 1, true, false));
+    assert_eq(sent[0], packet_iframe(false, 0, 1, false, true, "big"));
+    assert_eq(sent[1], packet_iframe(false, 0, 2, false, true, "world"));
+    assert(sent.size() == 2);
+    sent.clear();
+
+    std::cout << "--- Tester replies that it only got first two packets…\n";
+    con.rr(packet_rr(false, 2, true, false));
+    assert(sent.size() == 1);
     sent.clear();
 }
 

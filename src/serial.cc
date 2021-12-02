@@ -71,6 +71,7 @@ std::string kiss_escape(std::string_view sv)
     }
     return std::string(tmp.begin(), tmp.end());
 }
+FDWrap open_serial(std::string_view port);
 
 std::string kiss_unescape(std::string_view sv)
 {
@@ -142,8 +143,8 @@ private:
 class AX25Serial final : public ax25ms::RouterService::Service
 {
 public:
-    AX25Serial(FDWrap&& serial)
-        : serial_(std::move(serial)), reader_([this] { read_main(); })
+    AX25Serial(std::string_view port)
+        : port_(port), serial_(open_serial(port)), reader_([this] { read_main(); })
     {
         // TODO: remove. This is debugging.
         std::clog << "Serial starting...\n";
@@ -169,6 +170,18 @@ public:
                 }
                 std::array<char, 1024> tbuf;
                 const auto rc = ::read(serial_.get(), tbuf.data(), tbuf.size());
+                if (rc == 0) {
+                    std::cerr << "Serial port EOF. Attempting to reopen…\n";
+                    for (;;) {
+                        std::this_thread::sleep_for(std::chrono::seconds{ 1 });
+                        try {
+                            serial_ = open_serial(port_);
+                        } catch (const std::runtime_error& e) {
+                            std::cerr << "… still trying\n";
+                        }
+                    }
+                    return;
+                }
                 if (rc == -1) {
                     // TODO: try to reopen until success.
                     throw std::runtime_error(std::string("failed to read from serial: ") +
@@ -279,6 +292,7 @@ private:
     }
 
     std::mutex serial_mu_;
+    const std::string port_;
     FDWrap serial_;
 
 
@@ -290,8 +304,9 @@ private:
     std::jthread writer_;
 };
 
-FDWrap open_serial(const std::string& port)
+FDWrap open_serial(std::string_view portv)
 {
+    const auto port = std::string(portv);
     const int fd = open(port.c_str(), O_RDWR | O_NOCTTY);
     if (fd == -1) {
         throw std::runtime_error("failed to open " + port + ": " + strerror(errno));
@@ -355,7 +370,7 @@ int wrapmain(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
-    AX25Serial service(open_serial(port));
+    AX25Serial service(port);
 
     const std::string addr(listen);
     grpc::ServerBuilder builder;

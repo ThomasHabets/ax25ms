@@ -26,8 +26,6 @@ limitations under the License.
 #include <iostream>
 #include <memory>
 
-bool linux_compat = true;
-
 void log(std::string_view sv) { std::clog << sv << "\n"; }
 
 namespace {
@@ -47,6 +45,7 @@ bool in_range(int va, int nr, int vs, int mod)
 namespace seqpacket::con {
 void ConnectionState::dl_error(const DLError& e)
 {
+    // Page 81.
     std::map<DLError, std::string> sm = {
         { DLError::A, "A: F=1 received but P=1 not outstanding" },
         { DLError::B, "B: Unexpected DM with F=1 in states 3,4,5" },
@@ -54,7 +53,7 @@ void ConnectionState::dl_error(const DLError& e)
         { DLError::D, "D: UA received without F=1 when SABM or DISC was sent P=1" },
         { DLError::E, "E: DM received in states 3,4,5" },
         { DLError::F, "F: Data link reset; i.e., SABM received instate 3,4,5" },
-        //{DLError::G, ""},
+        { DLError::G, "G: Connection timed out" }, // TODO: specs don't list this.
         //{DLError::H, ""},
         { DLError::I, "I: N2 timeouts; unacknowledged data" },
         { DLError::J, "J: N(r) sequence error" },
@@ -147,7 +146,7 @@ void ConnectionState::clear_exception_conditions()
 }
 
 // Page 106.
-void ConnectionState::transmit_enquiry(int rc)
+void ConnectionState::transmit_enquiry()
 {
     const auto p = true;
     const auto nr = d.vr;
@@ -180,13 +179,29 @@ void ConnectionState::enquiry_response(bool f)
 //
 // Otherwise getting 10 REJs will immediately trigger 10 retransmissions of the
 // whole unacked window.
+//
+// Malicious or duplicated RRs could also trigger it.
 void ConnectionState::invoke_retransmission(int nr)
 {
-    std::cerr << "=========== NEED RETRANSMISSION NOT IMPLEMENTED ======\n";
-    for (int tmp_vs = nr; tmp_vs != d.vs; tmp_vs = (tmp_vs + 1) % d.modulus) {
-        // push old frame tmp_vs on d.send_queue_
-        // with vs set to the temp value?
-        // iframe_pop();
+    const int x = d.vs;
+    std::deque<ax25::Packet> resend;
+
+    d.vs = nr;
+    auto itr = d.iframe_resend_queue.rbegin();
+    for (int i = nr; i != x; i = (i + 1) % d.modulus) {
+        // push old frame with seq d.vs on d.send_queue_
+        assert(itr != d.iframe_resend_queue.rend());
+        d.iframe_queue_.push_front(*itr++);
+    }
+    iframe_pop();
+}
+
+void ConnectionState::update_ack(int nr)
+{
+    while (d.va != nr) {
+        assert(!d.iframe_resend_queue.empty());
+        d.iframe_resend_queue.pop_front();
+        d.va = (d.va + 1) % d.modulus;
     }
 }
 
@@ -194,7 +209,7 @@ void ConnectionState::invoke_retransmission(int nr)
 void ConnectionState::check_iframe_acked(int nr)
 {
     if (d.peer_receiver_busy) { // Typo in spec. It says "peer busy"
-        d.va = nr;
+        update_ack(nr);
         d.t3.start();
         if (!d.t1.running()) {
             d.t1.start();
@@ -203,7 +218,7 @@ void ConnectionState::check_iframe_acked(int nr)
     }
 
     if (nr == d.vs) {
-        d.va = nr;
+        update_ack(nr);
         d.t1.stop();
         d.t3.start();
         select_t1_value();
@@ -213,7 +228,7 @@ void ConnectionState::check_iframe_acked(int nr)
     // No, not all frames ack'd.
     std::clog << "XXXXXXX Not all frames acked\n";
     if (nr != d.va) {
-        d.va = nr;
+        update_ack(nr);
         d.t1.restart();
     }
 }
@@ -252,7 +267,7 @@ void ConnectionState::select_t1_value()
     return;
 
     double new_srt = d.srt;
-    int new_t1_ = d.t1.get();
+    // int new_t1_ = d.t1.get();
     if (d.rc) {
         //        int t1_remain = 0; // remaining time on T1 when last stopped
         //        new_srt = (7 / 8 * srt_) + (1 / 8 * t1_) - (1 / 8 * t1_remain);
@@ -364,6 +379,7 @@ public:
     stateptr_t rr(const ax25::Packet& p) override;
     stateptr_t disc(const ax25::Packet& p) override;
     stateptr_t dl_disconnect() override;
+    stateptr_t timer1_tick() override;
 
     bool can_receive_data() const override { return true; }
 };
@@ -383,7 +399,7 @@ ConnectionState::stateptr_t TimerRecovery::rr(const ax25::Packet& p)
             nr_error_recovery();
             return std::make_unique<AwaitingConnection>(connection_);
         }
-        d.va = nr;
+        update_ack(nr);
         if (d.vs != d.va) {
             invoke_retransmission(nr);
             return nullptr;
@@ -399,7 +415,7 @@ ConnectionState::stateptr_t TimerRecovery::rr(const ax25::Packet& p)
         nr_error_recovery();
         return std::make_unique<AwaitingConnection>(connection_);
     }
-    d.va = nr;
+    update_ack(nr);
     return nullptr;
 }
 
@@ -474,7 +490,7 @@ ConnectionState::stateptr_t AwaitingConnection::ua(const ax25::Packet& p)
         std::clog << "DL-CONNECT confirm\n";
     } else {
         if (d.vs != d.va) {
-            d.iframe_queue_.clear();
+            clear_iframe_queue();
             std::clog << "DL-CONNECT indication\n";
         }
     }
@@ -518,7 +534,7 @@ ConnectionState::stateptr_t Connected::dm(const ax25::Packet& p)
 {
     dl_error(DLError::E);
     std::clog << "DL-DISCONNECT indication\n";
-    d.iframe_queue_.clear();
+    clear_iframe_queue();
     d.t1.stop();
     d.t3.stop();
     return std::make_unique<Disconnected>(connection_);
@@ -577,7 +593,7 @@ ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
         nr_error_recovery();
         return std::make_unique<AwaitingConnection>(connection_);
     }
-    d.va = nr;
+    update_ack(nr);
     if (d.own_receiver_busy) {
         // discard (implicit)
         if (poll) {
@@ -668,7 +684,7 @@ ConnectionState::stateptr_t Connected::sabm(const ax25::Packet& p)
     clear_exception_conditions();
     dl_error(DLError::F);
     if (d.vs != d.va) {
-        d.iframe_queue_.clear();
+        clear_iframe_queue();
         std::clog << "DL-CONNECT indication\n";
     }
     d.t1.stop();
@@ -772,7 +788,7 @@ ConnectionState::stateptr_t Connected::dl_connect(std::string_view dst,
 {
     connection_->set_src(src);
     connection_->set_dst(dst);
-    d.iframe_queue_.clear();
+    clear_iframe_queue();
     establish_data_link();
     d.layer3_initiated = true;
     return std::make_unique<AwaitingConnection>(connection_);
@@ -782,15 +798,35 @@ ConnectionState::stateptr_t Connected::dl_connect(std::string_view dst,
 ConnectionState::stateptr_t Connected::timer1_tick()
 {
     d.rc = 1;
-    transmit_enquiry(1);
+    transmit_enquiry();
     return std::make_unique<TimerRecovery>(connection_);
+}
+
+// Page 99.
+ConnectionState::stateptr_t TimerRecovery::timer1_tick()
+{
+    if (d.rc != d.n2) {
+        d.rc++;
+        transmit_enquiry();
+        return nullptr;
+    }
+
+    if (d.va != d.vs) {
+        dl_error(DLError::I);
+    } else if (d.peer_receiver_busy) { // Typo in spec: "peer busy"
+        dl_error(DLError::U);
+    } else {
+        dl_error(DLError::T);
+    }
+    std::clog << "TODO: DL-Disconnect request?\n";
+    return std::make_unique<Disconnected>(connection_);
 }
 
 // Page 88.
 ConnectionState::stateptr_t AwaitingConnection::timer1_tick()
 {
     if (d.rc == d.n2) {
-        d.iframe_queue_.clear();
+        clear_iframe_queue();
         dl_error(DLError::G);
         std::cout << "DL-DISCONNECT indication\n";
         return std::make_unique<States::Disconnected>(connection_);
@@ -809,6 +845,8 @@ ConnectionState::stateptr_t Connected::dl_data(std::string_view sv)
     auto& iframe = *p.mutable_iframe();
     iframe.set_pid(0xf0);
     iframe.set_payload(sv.data(), sv.size());
+    p.set_command_response(true);
+    d.iframe_resend_queue.push_back(p);
     d.iframe_queue_.push_back(std::move(p));
     iframe_pop();
     return nullptr;
@@ -830,7 +868,7 @@ ConnectionState::stateptr_t TimerRecovery::dl_data(std::string_view sv)
 // Page 92.
 ConnectionState::stateptr_t Connected::dl_disconnect()
 {
-    d.iframe_queue_.clear();
+    clear_iframe_queue();
     d.rc = 0;
     send_disc(true);
     d.t3.stop();
@@ -842,7 +880,7 @@ ConnectionState::stateptr_t Connected::dl_disconnect()
 ConnectionState::stateptr_t TimerRecovery::dl_disconnect()
 {
     // TODO: merge with Connected.
-    d.iframe_queue_.clear();
+    clear_iframe_queue();
     d.rc = 0;
     send_disc(true);
     d.t3.stop();
@@ -851,11 +889,17 @@ ConnectionState::stateptr_t TimerRecovery::dl_disconnect()
 }
 } // namespace States
 
-void ConnectionState::send_ua(bool poll)
+void ConnectionState::clear_iframe_queue()
+{
+    d.iframe_queue_.clear();
+    d.iframe_resend_queue.clear();
+}
+
+void ConnectionState::send_ua(bool pf)
 {
     ax25::Packet packet;
     auto& ua = *packet.mutable_ua();
-    ua.set_poll(poll);
+    ua.set_poll(pf);
     connection_->send_packet(packet);
 }
 
@@ -934,7 +978,7 @@ Connection::Connection(send_func_t send, receive_func_t receive)
 {
     data_.t1.set(3000);
     data_.t2.set(3000);
-    data_.t3.set(300 * 60);
+    data_.t3.set(300 * 1000);
 }
 
 ConnectionState::ConnectionState(Connection* connection)
@@ -944,40 +988,42 @@ ConnectionState::ConnectionState(Connection* connection)
 
 void ConnectionState::iframe_pop()
 {
-    if (d.peer_receiver_busy) {
-        // push frame on queue
-        return;
-    }
+    while (!d.iframe_queue_.empty()) {
+        if (d.peer_receiver_busy) {
+            // push frame on queue
+            return;
+        }
 
-    // Check window full.
-    if (d.vs == (d.va + d.k) % d.modulus) {
-        // push i frame on queue
-        return;
-    }
+        // Check window full.
+        if (d.vs == (d.va + d.k) % d.modulus) {
+            // push i frame on queue
+            return;
+        }
 
-    const auto ns = d.vs;
-    const auto nr = d.vr;
-    auto packet = d.iframe_queue_.front();
-    d.iframe_queue_.pop_front();
+        const auto ns = d.vs;
+        const auto nr = d.vr;
+        auto packet = d.iframe_queue_.front();
+        d.iframe_queue_.pop_front();
 
-    auto& iframe = *packet.mutable_iframe();
-    iframe.set_ns(ns);
-    iframe.set_nr(nr);
+        auto& iframe = *packet.mutable_iframe();
+        iframe.set_ns(ns);
+        iframe.set_nr(nr);
 
-    connection_->send_packet(packet);
+        connection_->send_packet(packet);
 
-    d.vs = (d.vs + 1) % d.modulus;
+        d.vs = (d.vs + 1) % d.modulus;
 
-    if (!d.t1.running()) {
-        d.t1.start();
-        d.t3.stop();
+        if (!d.t1.running()) {
+            d.t1.start();
+            d.t3.stop();
+        }
     }
 }
 
 ConnectionState::stateptr_t
 ConnectionState::connected_timer_recovery_disc(const ax25::Packet& p)
 {
-    d.iframe_queue_.clear();
+    clear_iframe_queue();
     const auto f = p.disc().poll();
     send_ua(f);
     std::cout << "DL-DISCONNECT indication\n";

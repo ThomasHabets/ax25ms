@@ -98,7 +98,9 @@ std::string serialize(const ax25::Packet& packet)
         ret.push_back(control);
     }
     if (packet.has_sabme()) {
-        ret.push_back(0b011'0'11'11);
+        uint8_t control = 0b011'0'11'11;
+        control |= packet.sabme().poll() ? 0b00010000 : 0;
+        ret.push_back(control);
     }
     if (packet.has_disc()) {
         uint8_t control = 0b010'0'00'11;
@@ -106,10 +108,14 @@ std::string serialize(const ax25::Packet& packet)
         ret.push_back(control);
     }
     if (packet.has_dm()) {
-        ret.push_back(0b000'0'11'11);
+        uint8_t control = 0b000'0'11'11;
+        control |= packet.dm().poll() ? 0b00010000 : 0;
+        ret.push_back(control);
     }
     if (packet.has_ua()) {
-        ret.push_back(0b011'0'00'11);
+        uint8_t control = 0b011'0'00'11;
+        control |= packet.ua().poll() ? 0b00010000 : 0;
+        ret.push_back(control);
     }
     if (packet.has_rr()) {
         if (!packet.rr_extseq()) {

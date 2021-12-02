@@ -77,9 +77,9 @@ struct ConnectionData {
     bool selective_reject_exception = false;
     bool acknowledge_pending = false;
     double srt = 0;
-    int t1v = 0;  // Next value for T1; default init value is initial value of SRT.
-    int n1 = 200; // Max number of octets in the information field of a frame.
-    int n2 = 3;   // Max number of retries permitted.
+    int t1v = 0; // Next value for T1; default init value is initial value of SRT.
+    unsigned int n1 = 200; // Max number of octets in the information field of a frame.
+    int n2 = 3;            // Max number of retries permitted.
 
     Timer t1{ "t1" }; // Outstanding I frame or P-bit
     Timer t2{ "t2" }; // Response delay timer. 6.7.1.2
@@ -90,32 +90,35 @@ struct ConnectionData {
 
     // 6.7.2.3. Maximum Number of I Frames Outstanding (k)
     //
-    // The maximum number of I frames outstanding at a time is seven (modulo 8) or
-    // 127 (modulo 128).
+    // The maximum number of I frames outstanding at a time is seven
+    // (modulo 8) or 127 (modulo 128).
     int k = 7;
 
     // 4.2.4.1: Send State Variable.
     //
-    // The send state variable exists within the TNC and is never sent. It
-    // contains the next sequential number to be assigned to the next transmitted
-    // I frame. This variable is updated with the transmission of each I frame.
+    // The send state variable exists within the TNC and is never
+    // sent. It contains the next sequential number to be assigned to
+    // the next transmitted I frame. This variable is updated with the
+    // transmission of each I frame.
     int vs{};
 
     // 4.2.4.5. Acknowledge State Variable V(A)
     //
-    // The acknowledge state variable exists within the TNC and is never sent. It
-    // contains the sequence number of the last frame acknowledged by its peer
-    // [V(A)-1 equals the N(S) of the last acknowledged I frame].
+    // The acknowledge state variable exists within the TNC and is
+    // never sent. It contains the sequence number of the last frame
+    // acknowledged by its peer [V(A)-1 equals the N(S) of the last
+    // acknowledged I frame].
     int va{};
 
     // RC = retry count?
 
     // 4.2.4.3. Receive State Variable V(R)
     //
-    // The receive state variable exists within the TNC. It contains the sequence number
-    // of the next expected received I frame. This variable is updated upon the reception
-    // of an error-free I frame whose send sequence number equals the present received
-    // state variable value
+    // The receive state variable exists within the TNC. It contains
+    // the sequence number of the next expected received I frame. This
+    // variable is updated upon the reception of an error-free I frame
+    // whose send sequence number equals the present received state
+    // variable value
     int vr{};
 
     bool srej_enabled = false;
@@ -123,6 +126,16 @@ struct ConnectionData {
 
     // Queues (page 81).
     std::deque<ax25::Packet> iframe_queue_;
+
+    // Resend queue.
+    //
+    // TODO: there's lots of copying going on. Maybe best to have the
+    // resend queue be the canonical store, and have other places carry
+    // pointers/iterators?
+    //
+    // deque iterators are not invalidated by inserts/deletes at the
+    // ends.
+    std::deque<ax25::Packet> iframe_resend_queue;
 };
 
 class ConnectionState
@@ -171,8 +184,16 @@ public:
     virtual stateptr_t rr(const ax25::Packet& p);
     virtual stateptr_t ui(const ax25::Packet& p);
     virtual stateptr_t iframe(const ax25::Packet& p);
-    virtual stateptr_t timer1_tick() { return nullptr; }
-    virtual stateptr_t timer3_tick() { return nullptr; }
+    virtual stateptr_t timer1_tick()
+    {
+        std::cerr << "ERROR: unhandled T1\n";
+        return nullptr;
+    }
+    virtual stateptr_t timer3_tick()
+    {
+        std::cerr << "ERROR: unhandled T3\n";
+        return nullptr;
+    }
 
     // Request establishment of AX.25.
     virtual stateptr_t dl_connect(std::string_view dst, std::string_view src)
@@ -193,6 +214,9 @@ public:
     void iframe_pop();
     virtual bool can_receive_data() const = 0;
 
+    void update_ack(int nr);
+    void clear_iframe_queue();
+
 protected:
     // senders.
     void send_sabm(bool poll);
@@ -209,7 +233,7 @@ protected:
     void nr_error_recovery();
     void establish_data_link();
     void clear_exception_conditions();
-    void transmit_enquiry(int rc);
+    void transmit_enquiry();
     void enquiry_response(bool f);
     void invoke_retransmission(int nr);
     void check_iframe_acked(int nr);

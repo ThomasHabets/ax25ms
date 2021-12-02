@@ -188,12 +188,12 @@ std::pair<ConnEntry::time_point_t, bool> ConnEntry::next_timer() const
 void ConnEntry::trigger_timers()
 {
     if (con_.data().t1.expired()) {
-        con_.timer1_tick();
         con_.data().t1.stop();
+        con_.timer1_tick();
     }
     if (con_.data().t3.expired()) {
-        con_.timer3_tick();
         con_.data().t3.stop();
+        con_.timer3_tick();
     }
 }
 
@@ -249,7 +249,9 @@ public:
                                      ax25ms::SeqConnectRequest>* stream) override
     {
         try {
-            return Connect2(ctx, stream);
+            auto ret = Connect2(ctx, stream);
+            std::clog << "Connect() returning\n";
+            return ret;
         } catch (const std::exception& e) {
             std::cerr << "Connect() exception: " << e.what() << "\n";
         } catch (...) {
@@ -426,7 +428,7 @@ public:
                     break;
                 }
             }
-            ctx->TryCancel();
+            ctx->TryCancel(); // TODO: defer this.
         });
         while (stream->Read(&req)) {
             ce.apply([&req](auto& con) { con.dl_data(req.packet().payload()); });
