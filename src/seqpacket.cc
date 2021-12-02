@@ -278,8 +278,7 @@ public:
                          grpc::ServerReaderWriter<ax25ms::SeqAcceptResponse,
                                                   ax25ms::SeqAcceptRequest>* stream)
     {
-#if 0
-        std::clog << "Accept2()\n";
+        std::clog << "Accepting a new connection()\n";
         ax25ms::SeqAcceptRequest req;
         if (!stream->Read(&req)) {
             return grpc::Status(grpc::INVALID_ARGUMENT, "no initial data received");
@@ -293,22 +292,20 @@ public:
         const auto dst = req.packet().metadata().address().address();
         const auto src = req.packet().metadata().source_address().address();
 
-        auto conu = std::make_unique<Connection>(
-            src,
-            dst,
-            router_,
-            &scheduler_,
-            req.packet().metadata().connection_settings().extended());
-        auto& con = *conu;
-        {
+        // Lifetime of ce is until end of this function, since nothing else deletes it.
+        auto& ce = *([this, &src, &dst] {
+            Connection::send_func_t fs = [this](auto& p) { return send(p); };
+            auto conu = std::make_unique<ConnEntry>(fs);
             std::unique_lock<std::mutex> lk(mu_);
-            connections_[{ src, dst }] = std::move(conu);
-        }
-        auto state = con.wait_state_change();
-        if (state != Connection::State::CONNECTED) {
-            return grpc::Status(grpc::UNKNOWN, "accept failed");
-        }
+            auto [itr, ok] = connections_.insert({ { src, dst }, std::move(conu) });
+            if (!ok) {
+                throw std::runtime_error("Failed to insert connection. Duplicate?");
+            }
+            return itr->second.get();
+        }());
 
+        // TODO: also await ctx cancellation.
+        ce.await_state_not(seqpacket::con::StateNames::Disconnected);
         std::clog << "Connection accepted!\n";
 
         // Send connection metadata
@@ -322,34 +319,33 @@ public:
         }
 
         // Start receiving.
-        std::jthread receive_thread([ctx, &con, stream] {
-				      pthread_setname_np(pthread_self(), "accept_receive_read");
+        std::jthread receive_thread([ctx, &ce, stream] {
+            pthread_setname_np(pthread_self(), "accept_receive_read");
             for (;;) {
-                auto [payload, st] = con.read();
-                if (!st.ok()) {
+                auto [payload, ok] = ce.await_data();
+                if (!ok) {
+                    std::clog << "Stopping accept reader\n";
                     break;
                 }
-                // std::clog << "SENDING ON STREAM: " << payload << "\n";
                 ax25ms::SeqAcceptResponse data;
                 data.mutable_packet()->set_payload(payload);
                 if (!stream->Write(data)) {
                     std::cerr << "Failed to write to stream\n";
-                    return;
+                    break;
                 }
             }
             ctx->TryCancel(); // TODO: defer this.
         });
         while (stream->Read(&req)) {
-            con.write(req.packet().payload());
+            ce.apply([&req](auto& con) { con.dl_data(req.packet().payload()); });
         }
         std::clog << "Accept connection ended\n";
-        const auto ret = con.disconnect();
+        ce.apply([](auto& con) { con.dl_disconnect(); });
+        receive_thread.join();
         {
             std::unique_lock<std::mutex> lk(mu_);
             connections_.erase({ src, dst });
         }
-        return ret;
-#endif
         return grpc::Status::OK;
     }
 
