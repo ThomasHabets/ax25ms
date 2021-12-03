@@ -187,6 +187,8 @@ void ConnectionState::invoke_retransmission(int nr)
     std::deque<ax25::Packet> resend;
 
     d.vs = nr;
+    std::clog << "Retransmitting from " << nr << " to " << x << " with "
+              << d.iframe_resend_queue.size() << "\n";
     auto itr = d.iframe_resend_queue.rbegin();
     for (int i = nr; i != x; i = (i + 1) % d.modulus) {
         // push old frame with seq d.vs on d.send_queue_
