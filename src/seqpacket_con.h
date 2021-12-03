@@ -31,13 +31,16 @@ class Connection;
 class Timer
 {
 public:
+    using time_point_t = std::chrono::time_point<std::chrono::steady_clock>;
+
     Timer(std::string_view sv) : name_(sv) {}
     void set(int ms) { ms_ = ms; }
     int get() { return ms_; }
     void start()
     {
-        std::cerr << "Starting timer " << name_ << "\n";
+        std::cerr << "Starting timer " << name_ << " with ms=" << ms_ << "\n";
         running_ = true;
+        deadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds{ ms_ };
     }
     void stop()
     {
@@ -49,10 +52,16 @@ public:
         stop();
         start();
     }
-    bool running() { return running_; }
+    bool running() const { return running_; }
+    bool expired() const
+    {
+        return running_ && std::chrono::steady_clock::now() > deadline_;
+    }
+    time_point_t deadline() const { return deadline_; }
 
 private:
     int ms_ = -1;
+    time_point_t deadline_;
     bool running_ = false;
     const std::string name_;
 };
@@ -68,9 +77,9 @@ struct ConnectionData {
     bool selective_reject_exception = false;
     bool acknowledge_pending = false;
     double srt = 0;
-    int t1v = 0;  // Next value for T1; default init value is initial value of SRT.
-    int n1 = 200; // Max number of octets in the information field of a frame.
-    int n2 = 3;   // Max number of retries permitted.
+    int t1v = 0; // Next value for T1; default init value is initial value of SRT.
+    unsigned int n1 = 200; // Max number of octets in the information field of a frame.
+    int n2 = 3;            // Max number of retries permitted.
 
     Timer t1{ "t1" }; // Outstanding I frame or P-bit
     Timer t2{ "t2" }; // Response delay timer. 6.7.1.2
@@ -81,32 +90,35 @@ struct ConnectionData {
 
     // 6.7.2.3. Maximum Number of I Frames Outstanding (k)
     //
-    // The maximum number of I frames outstanding at a time is seven (modulo 8) or
-    // 127 (modulo 128).
+    // The maximum number of I frames outstanding at a time is seven
+    // (modulo 8) or 127 (modulo 128).
     int k = 7;
 
     // 4.2.4.1: Send State Variable.
     //
-    // The send state variable exists within the TNC and is never sent. It
-    // contains the next sequential number to be assigned to the next transmitted
-    // I frame. This variable is updated with the transmission of each I frame.
+    // The send state variable exists within the TNC and is never
+    // sent. It contains the next sequential number to be assigned to
+    // the next transmitted I frame. This variable is updated with the
+    // transmission of each I frame.
     int vs{};
 
     // 4.2.4.5. Acknowledge State Variable V(A)
     //
-    // The acknowledge state variable exists within the TNC and is never sent. It
-    // contains the sequence number of the last frame acknowledged by its peer
-    // [V(A)-1 equals the N(S) of the last acknowledged I frame].
+    // The acknowledge state variable exists within the TNC and is
+    // never sent. It contains the sequence number of the last frame
+    // acknowledged by its peer [V(A)-1 equals the N(S) of the last
+    // acknowledged I frame].
     int va{};
 
     // RC = retry count?
 
     // 4.2.4.3. Receive State Variable V(R)
     //
-    // The receive state variable exists within the TNC. It contains the sequence number
-    // of the next expected received I frame. This variable is updated upon the reception
-    // of an error-free I frame whose send sequence number equals the present received
-    // state variable value
+    // The receive state variable exists within the TNC. It contains
+    // the sequence number of the next expected received I frame. This
+    // variable is updated upon the reception of an error-free I frame
+    // whose send sequence number equals the present received state
+    // variable value
     int vr{};
 
     bool srej_enabled = false;
@@ -114,6 +126,16 @@ struct ConnectionData {
 
     // Queues (page 81).
     std::deque<ax25::Packet> iframe_queue_;
+
+    // Resend queue.
+    //
+    // TODO: there's lots of copying going on. Maybe best to have the
+    // resend queue be the canonical store, and have other places carry
+    // pointers/iterators?
+    //
+    // deque iterators are not invalidated by inserts/deletes at the
+    // ends.
+    std::deque<ax25::Packet> iframe_resend_queue;
 };
 
 class ConnectionState
@@ -150,7 +172,7 @@ public:
     ConnectionState(Connection* connection);
     static constexpr int default_srt = 3000;
 
-    virtual std::string name() { return "base"; }
+    virtual std::string name() const { return "base"; }
 
     // Incoming packets.
     virtual stateptr_t ua(const ax25::Packet& p);
@@ -162,10 +184,22 @@ public:
     virtual stateptr_t rr(const ax25::Packet& p);
     virtual stateptr_t ui(const ax25::Packet& p);
     virtual stateptr_t iframe(const ax25::Packet& p);
-    virtual stateptr_t timer1_tick() { return nullptr; }
+    virtual stateptr_t timer1_tick()
+    {
+        std::cerr << "ERROR: unhandled T1\n";
+        return nullptr;
+    }
+    virtual stateptr_t timer3_tick()
+    {
+        std::cerr << "ERROR: unhandled T3\n";
+        return nullptr;
+    }
 
     // Request establishment of AX.25.
-    virtual stateptr_t dl_connect() { return nullptr; }
+    virtual stateptr_t dl_connect(std::string_view dst, std::string_view src)
+    {
+        return nullptr;
+    }
 
     // Transmit data using connection oriented protocol.
     virtual stateptr_t dl_data(std::string_view sv) { return nullptr; }
@@ -178,6 +212,10 @@ public:
 
     stateptr_t connected_timer_recovery_disc(const ax25::Packet& p);
     void iframe_pop();
+    virtual bool can_receive_data() const = 0;
+
+    void update_ack(int nr);
+    void clear_iframe_queue();
 
 protected:
     // senders.
@@ -185,17 +223,17 @@ protected:
     void send_sabme(bool poll);
     void send_ua(bool poll);
     void send_dm(bool poll);
-    void send_rr(bool poll, int nr);
+    void send_rr(bool poll, int nr, bool command);
     void send_rnr(bool poll, int nr);
     void send_rej(bool poll, int nr);
     void send_srej(bool poll, int nr);
-
+    void send_disc(bool poll);
 
     // subroutines.
     void nr_error_recovery();
     void establish_data_link();
     void clear_exception_conditions();
-    void transmit_enquiry(int rc);
+    void transmit_enquiry();
     void enquiry_response(bool f);
     void invoke_retransmission(int nr);
     void check_iframe_acked(int nr);
@@ -213,47 +251,72 @@ protected:
     void dl_error(const DLError& e);
 };
 
+namespace StateNames {
+constexpr const char* Disconnected = "Disconnected";
+constexpr const char* Connected = "Connected";
+constexpr const char* AwaitingConnection = "AwaitingConnection";
+constexpr const char* AwaitingRelease = "AwaitingRelease";
+constexpr const char* TimerRecovery = "TimerRecovery";
+} // namespace StateNames
+
 class Connection
 {
 public:
     using send_func_t = std::function<grpc::Status(const ax25::Packet&)>;
+    using receive_func_t = std::function<void(std::string_view)>;
+    using state_change_t = std::function<void(ConnectionState*)>;
 
-    Connection(send_func_t send);
-#define P(xx)                            \
-    template <typename T>                \
-    void xx(const T& p)                  \
-    {                                    \
-        if (auto n = state_->xx(p); n) { \
-            state_ = std::move(n);       \
-        }                                \
+    Connection(send_func_t send, receive_func_t receive);
+#define P(xx)                        \
+    template <typename T>            \
+    void xx(const T& p)              \
+    {                                \
+        state_change(state_->xx(p)); \
     }
     P(sabm)
     P(sabme)
     P(ui)
+    P(ua)
+    P(rr)
     P(iframe)
     P(dm)
     P(disc)
     P(dl_data)
+#define P0(xx) \
+    void xx() { state_change(state_->xx()); }
+    P0(timer1_tick)
+    P0(timer3_tick)
+    P0(dl_disconnect)
 #define P2(xx)                          \
-    void xx()                           \
+    template <typename T0, typename T1> \
+    void xx(const T0& a, const T1& b)   \
     {                                   \
-        if (auto n = state_->xx(); n) { \
-            state_ = std::move(n);      \
-        }                               \
+        state_change(state_->xx(a, b)); \
     }
-    P2(timer1_tick)
+    P2(dl_connect)
 
     ConnectionData& data() noexcept { return data_; }
+    const ConnectionData& data() const noexcept { return data_; }
     void send_packet(const ax25::Packet& packet);
 
     void set_src(std::string_view sv) { src_ = sv; }
     void set_dst(std::string_view sv) { dst_ = sv; }
+    void deliver(const ax25::Packet& p);
+    std::string state_name() const { return state_->name(); }
+    const ConnectionState& state() const { return *state_; }
+
+    void set_state_change_cb(state_change_t cb) { state_change_ = cb; }
 
 protected:
+    void state_change(std::unique_ptr<ConnectionState>&& st);
+
     std::string src_;
     std::string dst_;
     ConnectionData data_;
+
+    state_change_t state_change_; // = []{};
     send_func_t send_;
+    receive_func_t receive_;
     std::unique_ptr<ConnectionState> state_;
 };
 

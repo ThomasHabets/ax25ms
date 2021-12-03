@@ -17,16 +17,24 @@ limitations under the License.
  * Simple fd wrapper class.
  */
 #include <unistd.h>
+#include <utility>
 
 class FDWrap
 {
 public:
     explicit FDWrap(int fd) : fd_(fd) {}
     FDWrap(const FDWrap&) = delete;
-    FDWrap(FDWrap&& rhs)
+    FDWrap(FDWrap&& rhs) : fd_(std::exchange(rhs.fd_, -1))
     {
         fd_ = rhs.fd_;
         rhs.fd_ = -1;
+    }
+
+    FDWrap& operator=(FDWrap&& rhs)
+    {
+        close();
+        fd_ = std::exchange(rhs.fd_, -1);
+        return *this;
     }
 
     int get() const noexcept { return fd_; }

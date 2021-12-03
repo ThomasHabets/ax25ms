@@ -28,10 +28,56 @@ limitations under the License.
 
 void log(std::string_view sv) { std::clog << sv << "\n"; }
 
+namespace {
+bool in_range(int va, int nr, int vs, int mod)
+{
+    for (int t = va;; t = (t + 1) % mod) {
+        if (t == nr) {
+            return true;
+        }
+        if (t == vs) {
+            return false;
+        }
+    }
+}
+} // namespace
+
 namespace seqpacket::con {
 void ConnectionState::dl_error(const DLError& e)
 {
-    std::cerr << "DL ERROR: " << int(e) << "\n";
+    // Page 81.
+    std::map<DLError, std::string> sm = {
+        { DLError::A, "A: F=1 received but P=1 not outstanding" },
+        { DLError::B, "B: Unexpected DM with F=1 in states 3,4,5" },
+        { DLError::C, "C: Unexpected UA in states 3,4,5" },
+        { DLError::D, "D: UA received without F=1 when SABM or DISC was sent P=1" },
+        { DLError::E, "E: DM received in states 3,4,5" },
+        { DLError::F, "F: Data link reset; i.e., SABM received instate 3,4,5" },
+        { DLError::G, "G: Connection timed out" }, // TODO: specs don't list this.
+        //{DLError::H, ""},
+        { DLError::I, "I: N2 timeouts; unacknowledged data" },
+        { DLError::J, "J: N(r) sequence error" },
+        //{DLError::K, ""},
+        { DLError::L, "L: Control field invalid or not implemented" },
+        { DLError::M, "M: Information field was received in a U- or S-type frame" },
+        { DLError::N, "N: Length of frame incorrect for frame type" },
+        { DLError::O, "O: I frame exceeded maximum allowed length" },
+        { DLError::P, "P: N(s) out of the window" },
+        { DLError::Q, "Q: UI response received, or UI command with P=1 received" },
+        { DLError::R, "R: UI frame exceeded maximum allowed length" },
+        { DLError::S, "S: I response received" },
+        { DLError::T, "T: N2 timeout; no response to enquiry" },
+        { DLError::U, "U: N2 timeouts; extended pere busy condition" },
+        { DLError::V, "V: No DL machines available to establish connection" },
+    };
+    std::string s;
+    const auto itr = sm.find(e);
+    if (itr == sm.end()) {
+        s = "unknown";
+    } else {
+        s = itr->second;
+    }
+    std::cerr << "DL ERROR: " << int(e) << " (" << s << ")\n";
 }
 
 ConnectionState::stateptr_t ConnectionState::iframe(const ax25::Packet& p)
@@ -72,6 +118,7 @@ ConnectionState::stateptr_t ConnectionState::ui(const ax25::Packet& p)
     throw std::runtime_error("Unexpected ui in state " + name());
 }
 
+// Page 106.
 void ConnectionState::nr_error_recovery()
 {
     dl_error(DLError::J);
@@ -99,7 +146,7 @@ void ConnectionState::clear_exception_conditions()
 }
 
 // Page 106.
-void ConnectionState::transmit_enquiry(int rc)
+void ConnectionState::transmit_enquiry()
 {
     const auto p = true;
     const auto nr = d.vr;
@@ -107,7 +154,7 @@ void ConnectionState::transmit_enquiry(int rc)
     if (d.own_receiver_busy) {
         send_rnr(p, nr);
     } else {
-        send_rr(p, nr);
+        send_rr(p, nr, true);
     }
     d.acknowledge_pending = false;
     d.t1.start();
@@ -120,7 +167,7 @@ void ConnectionState::enquiry_response(bool f)
     if (d.own_receiver_busy) {
         send_rnr(f, nr);
     } else {
-        send_rr(f, nr);
+        send_rr(f, nr, false); // Bug in spec. Spec says to use "RR command".
     }
     d.acknowledge_pending = false;
 }
@@ -132,10 +179,29 @@ void ConnectionState::enquiry_response(bool f)
 //
 // Otherwise getting 10 REJs will immediately trigger 10 retransmissions of the
 // whole unacked window.
+//
+// Malicious or duplicated RRs could also trigger it.
 void ConnectionState::invoke_retransmission(int nr)
 {
-    for (int tmp_vs = nr; tmp_vs != d.vs; tmp_vs = (tmp_vs + 1) % d.modulus) {
-        // push old frame tmp_vs on queue
+    const int x = d.vs;
+    std::deque<ax25::Packet> resend;
+
+    d.vs = nr;
+    auto itr = d.iframe_resend_queue.rbegin();
+    for (int i = nr; i != x; i = (i + 1) % d.modulus) {
+        // push old frame with seq d.vs on d.send_queue_
+        assert(itr != d.iframe_resend_queue.rend());
+        d.iframe_queue_.push_front(*itr++);
+    }
+    iframe_pop();
+}
+
+void ConnectionState::update_ack(int nr)
+{
+    while (d.va != nr) {
+        assert(!d.iframe_resend_queue.empty());
+        d.iframe_resend_queue.pop_front();
+        d.va = (d.va + 1) % d.modulus;
     }
 }
 
@@ -143,7 +209,7 @@ void ConnectionState::invoke_retransmission(int nr)
 void ConnectionState::check_iframe_acked(int nr)
 {
     if (d.peer_receiver_busy) { // Typo in spec. It says "peer busy"
-        d.va = nr;
+        update_ack(nr);
         d.t3.start();
         if (!d.t1.running()) {
             d.t1.start();
@@ -152,7 +218,7 @@ void ConnectionState::check_iframe_acked(int nr)
     }
 
     if (nr == d.vs) {
-        d.va = nr;
+        update_ack(nr);
         d.t1.stop();
         d.t3.start();
         select_t1_value();
@@ -162,12 +228,12 @@ void ConnectionState::check_iframe_acked(int nr)
     // No, not all frames ack'd.
     std::clog << "XXXXXXX Not all frames acked\n";
     if (nr != d.va) {
-        d.va = nr;
+        update_ack(nr);
         d.t1.restart();
     }
 }
 
-// // Page 108.
+// Page 108.
 void ConnectionState::check_need_for_response(bool command, bool pf)
 {
     if (command && pf) {
@@ -186,7 +252,7 @@ void ConnectionState::ui_check(bool command)
     }
 
     if (/* info field length <= N1 and content is octet aligned */ true) {
-        // dl-unit-data indication
+        std::clog << "DL-UNIT-DATA indication\n";
     } else {
         dl_error(DLError::K);
     }
@@ -196,10 +262,12 @@ void ConnectionState::ui_check(bool command)
 void ConnectionState::select_t1_value()
 {
     // TODO: this updates t1 and according to RTT. Temp disable this.
+    d.srt = 1500;
+    d.t1.set(d.srt * 2);
     return;
 
     double new_srt = d.srt;
-    int new_t1_ = d.t1.get();
+    // int new_t1_ = d.t1.get();
     if (d.rc) {
         //        int t1_remain = 0; // remaining time on T1 when last stopped
         //        new_srt = (7 / 8 * srt_) + (1 / 8 * t1_) - (1 / 8 * t1_remain);
@@ -212,8 +280,7 @@ void ConnectionState::select_t1_value()
 void ConnectionState::establish_extended_data_link()
 {
     clear_exception_conditions();
-    // rc <- 0
-    // p <- 1
+    d.rc = 0;
     send_sabme(true);
     d.t3.stop();
     d.t1.restart();
@@ -247,45 +314,42 @@ namespace States {
 class Disconnected final : public ConnectionState
 {
 public:
-    Disconnected(Connection* connection) : ConnectionState(connection)
-    {
-        log("State: Disconnected");
-    }
-    std::string name() override { return "disconnected"; }
+    Disconnected(Connection* connection) : ConnectionState(connection) {}
+    std::string name() const override { return StateNames::Disconnected; }
     stateptr_t ui(const ax25::Packet& p) override;
     stateptr_t disc(const ax25::Packet& p) override;
     stateptr_t sabm(const ax25::Packet& p) override;
     stateptr_t sabme(const ax25::Packet& p) override { return sabm(p); }
 
-    stateptr_t dl_connect() override;
+    stateptr_t dl_connect(std::string_view dst, std::string_view src) override;
+
+    bool can_receive_data() const override { return false; }
 };
 
 class AwaitingConnection final : public ConnectionState
 {
 public:
-    AwaitingConnection(Connection* con) : ConnectionState(con)
-    {
-        log("State: Awaiting connection");
-    }
+    AwaitingConnection(Connection* con) : ConnectionState(con) {}
+    std::string name() const override { return StateNames::AwaitingConnection; }
 
     stateptr_t ua(const ax25::Packet& p) override;
+    stateptr_t timer1_tick() override;
+    bool can_receive_data() const override { return false; }
 };
 
 class AwaitingRelease final : public ConnectionState
 {
 public:
-    AwaitingRelease(Connection* con) : ConnectionState(con)
-    {
-        log("State: Awaiting release");
-    }
+    AwaitingRelease(Connection* con) : ConnectionState(con) {}
+    bool can_receive_data() const override { return false; }
 };
 
 // Page 92.
 class Connected final : public ConnectionState
 {
 public:
-    Connected(Connection* con) : ConnectionState(con) { log("State: Connected"); }
-    std::string name() override { return "connected"; }
+    Connected(Connection* con) : ConnectionState(con) {}
+    std::string name() const override { return StateNames::Connected; }
 
     stateptr_t ua(const ax25::Packet& p) override;
     stateptr_t dm(const ax25::Packet& p) override;
@@ -299,57 +363,85 @@ public:
     stateptr_t timer1_tick() override;
 
     stateptr_t dl_data(std::string_view sv) override;
-    stateptr_t dl_connect() override;
+    stateptr_t dl_connect(std::string_view dst, std::string_view src) override;
     stateptr_t dl_disconnect() override;
+    bool can_receive_data() const override { return true; }
 };
 
 class TimerRecovery final : public ConnectionState
 {
 public:
-    TimerRecovery(Connection* con) : ConnectionState(con)
-    {
-        log("State: Timer recovery");
-    }
-    std::string name() override { return "timer recovery"; }
+    TimerRecovery(Connection* con) : ConnectionState(con) {}
+    std::string name() const override { return StateNames::TimerRecovery; }
 
     stateptr_t dl_data(std::string_view sv) override;
     stateptr_t iframe(const ax25::Packet& p) override;
     stateptr_t rr(const ax25::Packet& p) override;
     stateptr_t disc(const ax25::Packet& p) override;
+    stateptr_t dl_disconnect() override;
+    stateptr_t timer1_tick() override;
+
+    bool can_receive_data() const override { return true; }
 };
 
-
+// Page 99.
 ConnectionState::stateptr_t TimerRecovery::rr(const ax25::Packet& p)
 {
     const auto command = p.command_response();
-    const auto poll = p.rr().poll();
+    const auto pf = p.rr().poll();
     const auto nr = p.rr().nr();
-    const auto ns = p.rr().ns();
 
     d.peer_receiver_busy = false;
-    check_need_for_response(command, poll);
-    if (d.va <= nr && nr <= ns) {
-        check_iframe_acked(nr);
+    if (!command && pf) {
+        d.t1.stop();
+        select_t1_value();
+        if (!in_range(d.va, nr, d.vs, d.modulus)) {
+            nr_error_recovery();
+            return std::make_unique<AwaitingConnection>(connection_);
+        }
+        update_ack(nr);
+        if (d.vs != d.va) {
+            invoke_retransmission(nr);
+            return nullptr;
+        }
+        d.t3.start();
         return std::make_unique<Connected>(connection_);
     }
 
-    nr_error_recovery();
-    return std::make_unique<AwaitingConnection>(connection_);
+    if (command && pf) {
+        enquiry_response(true);
+    }
+    if (!in_range(d.va, nr, d.vs, d.modulus)) {
+        nr_error_recovery();
+        return std::make_unique<AwaitingConnection>(connection_);
+    }
+    update_ack(nr);
+    return nullptr;
 }
 
+// Page 84.
 ConnectionState::stateptr_t Disconnected::ui(const ax25::Packet& p)
 {
-    // if (p==1) {send_dm();}
+    const auto pf = p.ui().push();
+    const auto command = p.command_response();
+
+    ui_check(command);
+    if (pf) {
+        send_dm(true);
+    }
     return nullptr;
 }
 
+// Page 84.
 ConnectionState::stateptr_t Disconnected::disc(const ax25::Packet& p)
 {
-    // f <- p
-    // send_dm();
+    const auto pf = p.disc().poll();
+
+    send_dm(pf);
     return nullptr;
 }
 
+// Page 85.
 ConnectionState::stateptr_t Disconnected::sabm(const ax25::Packet& p)
 {
     bool f;
@@ -365,7 +457,7 @@ ConnectionState::stateptr_t Disconnected::sabm(const ax25::Packet& p)
     // TODO
     if (!listening_) {
         send_dm(f);
-        return;
+        return nullptr;
     }
 #endif
 
@@ -388,6 +480,7 @@ ConnectionState::stateptr_t Disconnected::sabm(const ax25::Packet& p)
 ConnectionState::stateptr_t AwaitingConnection::ua(const ax25::Packet& p)
 {
     const auto f = p.ua().poll();
+
     if (!f) {
         dl_error(DLError::D);
         return nullptr;
@@ -397,8 +490,8 @@ ConnectionState::stateptr_t AwaitingConnection::ua(const ax25::Packet& p)
         std::clog << "DL-CONNECT confirm\n";
     } else {
         if (d.vs != d.va) {
-            d.iframe_queue_.clear();
-            std::clog << "DL-CONNECT confirm\n";
+            clear_iframe_queue();
+            std::clog << "DL-CONNECT indication\n";
         }
     }
     d.t1.stop();
@@ -410,10 +503,13 @@ ConnectionState::stateptr_t AwaitingConnection::ua(const ax25::Packet& p)
     return std::make_unique<Connected>(connection_);
 }
 
+// Page 93.
 ConnectionState::stateptr_t Connected::ua(const ax25::Packet& p)
 {
-    // return to awaiting connection
-    return nullptr;
+    dl_error(DLError::C);
+    establish_data_link();
+    d.layer3_initiated = false;
+    return std::make_unique<AwaitingConnection>(connection_);
 }
 
 // Page 95.
@@ -422,21 +518,29 @@ ConnectionState::stateptr_t Connected::rr(const ax25::Packet& p)
     const auto command = p.command_response();
     const auto pf = p.rr().poll();
     const auto nr = p.rr().nr();
+
     d.peer_receiver_busy = false;
     check_need_for_response(command, pf);
-    if (d.va < nr && nr < d.vs) {
-        check_iframe_acked(nr);
-        return std::make_unique<Connected>(connection_);
+    if (!in_range(d.va, nr, d.vs, d.modulus)) {
+        nr_error_recovery();
+        return std::make_unique<AwaitingConnection>(connection_);
     }
-    nr_error_recovery();
-    return std::make_unique<AwaitingConnection>(connection_);
+    check_iframe_acked(nr);
+    return nullptr;
 }
 
+// Page 93.
 ConnectionState::stateptr_t Connected::dm(const ax25::Packet& p)
 {
+    dl_error(DLError::E);
+    std::clog << "DL-DISCONNECT indication\n";
+    clear_iframe_queue();
+    d.t1.stop();
+    d.t3.stop();
     return std::make_unique<Disconnected>(connection_);
 }
 
+// Page 94.
 ConnectionState::stateptr_t Connected::frmr(const ax25::Packet& p)
 {
     dl_error(DLError::K);
@@ -448,25 +552,32 @@ ConnectionState::stateptr_t Connected::frmr(const ax25::Packet& p)
 // Page 94.
 ConnectionState::stateptr_t Connected::ui(const ax25::Packet& p)
 {
-    ui_check(p.command_response());
-    if (p.ui().push()) {
+    const auto pf = p.ui().push();
+    const auto command = p.command_response();
+
+    ui_check(command);
+    if (pf) {
         enquiry_response(true);
     }
     return nullptr;
 }
 
+// Page 100.
 ConnectionState::stateptr_t TimerRecovery::disc(const ax25::Packet& p)
 {
     return connected_timer_recovery_disc(p);
 }
 
 // Page 102.
+//
+// TODO: double check.
 ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
 {
     const auto nr = p.iframe().nr();
     const auto ns = p.iframe().ns();
     const auto poll = p.iframe().poll();
-    if (p.command_response()) {
+    if (!p.command_response()) {
+        // TODO: do we really care?
         dl_error(DLError::S);
         // discard frame (implicit)
         return nullptr;
@@ -477,11 +588,12 @@ ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
         d.layer3_initiated = false;
         return std::make_unique<AwaitingConnection>(connection_);
     }
-    if (!(d.va <= nr && nr <= d.vs)) {
+    if (!in_range(d.va, nr, d.vs, d.modulus)) {
+        // if (!(d.va <= nr && nr <= d.vs)) {
         nr_error_recovery();
         return std::make_unique<AwaitingConnection>(connection_);
     }
-    d.va = nr;
+    update_ack(nr);
     if (d.own_receiver_busy) {
         // discard (implicit)
         if (poll) {
@@ -492,17 +604,18 @@ ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
     }
 
     if (ns == d.vr) {
-        d.vr++;
+        d.vr = (d.vr + 1) % d.modulus;
         // clear reject exception
         // decrement sreject exception if >0
         std::cout << "DL-DATA INDICATION\n";
+        connection_->deliver(p);
         while (/*i frame stored*/ false) {
             //   retrieve stored V(r) i frame
             //   DL-DATA indication
-            d.vr++;
+            d.vr = (d.vr + 1) % d.modulus;
         }
         if (poll) {
-            send_rr(true, d.vr);
+            send_rr(true, d.vr, false);
             d.acknowledge_pending = false;
             return nullptr;
         }
@@ -518,7 +631,7 @@ ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
         if (!poll) {
             return nullptr;
         }
-        send_rr(true, d.vr);
+        send_rr(true, d.vr, false);
         d.acknowledge_pending = false;
         return nullptr;
     }
@@ -549,12 +662,13 @@ tail_srej_off:
     return nullptr;
 }
 
+// Page 93.
 ConnectionState::stateptr_t Connected::disc(const ax25::Packet& p)
 {
     return connected_timer_recovery_disc(p);
 }
 
-
+// Page 93.
 ConnectionState::stateptr_t Connected::sabm(const ax25::Packet& p)
 {
     bool f;
@@ -570,8 +684,8 @@ ConnectionState::stateptr_t Connected::sabm(const ax25::Packet& p)
     clear_exception_conditions();
     dl_error(DLError::F);
     if (d.vs != d.va) {
-        d.iframe_queue_.clear();
-        // TODO: dl_connect indication
+        clear_iframe_queue();
+        std::clog << "DL-CONNECT indication\n";
     }
     d.t1.stop();
     d.t3.start();
@@ -581,12 +695,17 @@ ConnectionState::stateptr_t Connected::sabm(const ax25::Packet& p)
     return nullptr;
 }
 
-// Page 97.
+// Page 96.
+//
+// TODO: double check, and maybe merge with TimerRecovery::iframe.
 ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
 {
+    const auto ns = p.iframe().ns();
     const auto nr = p.iframe().nr();
     const auto poll = p.iframe().poll();
-    if (!p.command_response()) {
+    const auto command = p.command_response();
+    if (!command) {
+        // TODO: do we really care?
         dl_error(DLError::S);
         // discard frame (implicit).
         return nullptr;
@@ -597,7 +716,7 @@ ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
         d.layer3_initiated = false;
         return std::make_unique<AwaitingConnection>(connection_);
     }
-    if (!(d.va <= nr && nr <= d.vs)) {
+    if (!in_range(d.va, nr, d.vs, d.modulus)) {
         nr_error_recovery();
         return std::make_unique<AwaitingConnection>(connection_);
     }
@@ -611,18 +730,19 @@ ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
         return nullptr;
     }
 
-    if (p.iframe().ns() == d.vr) {
-        d.vr++;
+    if (ns == d.vr) {
+        d.vr = (d.vr + 1) % d.modulus;
         // clear reject exception
         // decrement sreject exception if >0
         std::cout << "DL-DATA INDICATION\n";
+        connection_->deliver(p);
         while (/*i frame stored*/ false) {
             //   retrieve stored V(r) i frame
             //   DL-DATA indication
-            d.vr++;
+            d.vr = (d.vr + 1) % d.modulus;
         }
         if (poll) {
-            send_rr(true, d.vr);
+            send_rr(true, d.vr, false);
             d.acknowledge_pending = false;
             return nullptr;
         }
@@ -638,7 +758,7 @@ ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
         if (!poll) {
             return nullptr;
         }
-        send_rr(true, d.vr);
+        send_rr(true, d.vr, false);
         d.acknowledge_pending = false;
         return nullptr;
     }
@@ -648,74 +768,138 @@ ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
 }
 
 // Page 85.
-ConnectionState::stateptr_t Disconnected::dl_connect()
+ConnectionState::stateptr_t Disconnected::dl_connect(std::string_view dst,
+                                                     std::string_view src)
 {
-    // TODO.
-    connection_->set_src("M0THC-2");
-    connection_->set_dst("M0THC-1");
+    d.modulus = 8; // TODO
+    connection_->set_src(src);
+    connection_->set_dst(dst);
     d.srt = default_srt; // Spec typo: says SAT
     d.t1v = 2 * d.srt;
+    d.t1.set(d.t1v);
     establish_data_link();
     d.layer3_initiated = true;
     return std::make_unique<AwaitingConnection>(connection_);
 }
 
-// 85.
-ConnectionState::stateptr_t Connected::dl_connect()
+// Page 92.
+ConnectionState::stateptr_t Connected::dl_connect(std::string_view dst,
+                                                  std::string_view src)
 {
-    d.srt = default_srt; // Spec typo: says SAT
-    d.t1v = 2 * d.srt;
+    connection_->set_src(src);
+    connection_->set_dst(dst);
+    clear_iframe_queue();
+    establish_data_link();
+    d.layer3_initiated = true;
     return std::make_unique<AwaitingConnection>(connection_);
 }
 
 // Page 93.
 ConnectionState::stateptr_t Connected::timer1_tick()
 {
-    transmit_enquiry(1);
+    d.rc = 1;
+    transmit_enquiry();
     return std::make_unique<TimerRecovery>(connection_);
 }
 
+// Page 99.
+ConnectionState::stateptr_t TimerRecovery::timer1_tick()
+{
+    if (d.rc != d.n2) {
+        d.rc++;
+        transmit_enquiry();
+        return nullptr;
+    }
+
+    if (d.va != d.vs) {
+        dl_error(DLError::I);
+    } else if (d.peer_receiver_busy) { // Typo in spec: "peer busy"
+        dl_error(DLError::U);
+    } else {
+        dl_error(DLError::T);
+    }
+    std::clog << "TODO: DL-Disconnect request?\n";
+    return std::make_unique<Disconnected>(connection_);
+}
+
+// Page 88.
+ConnectionState::stateptr_t AwaitingConnection::timer1_tick()
+{
+    if (d.rc == d.n2) {
+        clear_iframe_queue();
+        dl_error(DLError::G);
+        std::cout << "DL-DISCONNECT indication\n";
+        return std::make_unique<States::Disconnected>(connection_);
+    }
+    d.rc++;
+    send_sabm(true);
+    select_t1_value();
+    d.t1.start();
+    return nullptr;
+}
+
+// Page 92.
 ConnectionState::stateptr_t Connected::dl_data(std::string_view sv)
 {
     ax25::Packet p;
     auto& iframe = *p.mutable_iframe();
-    iframe.set_pid(0xF0);
+    iframe.set_pid(0xf0);
     iframe.set_payload(sv.data(), sv.size());
+    p.set_command_response(true);
+    d.iframe_resend_queue.push_back(p);
     d.iframe_queue_.push_back(std::move(p));
-
     iframe_pop();
     return nullptr;
 }
 
+// Page 98.
 ConnectionState::stateptr_t TimerRecovery::dl_data(std::string_view sv)
 {
     // TODO: merge with Connected::dl_data()
     ax25::Packet p;
     auto& iframe = *p.mutable_iframe();
-    iframe.set_pid(0xF0);
+    iframe.set_pid(0xf0);
     iframe.set_payload(sv.data(), sv.size());
     d.iframe_queue_.push_back(std::move(p));
-
     iframe_pop();
     return nullptr;
 }
 
+// Page 92.
 ConnectionState::stateptr_t Connected::dl_disconnect()
 {
-    // discard i frame queue
-    // rc <- 0
-    // send_disc(P=1)
-    // step T3
-    // start T1
+    clear_iframe_queue();
+    d.rc = 0;
+    send_disc(true);
+    d.t3.stop();
+    d.t1.start();
+    return std::make_unique<AwaitingRelease>(connection_);
+}
+
+// Page 98.
+ConnectionState::stateptr_t TimerRecovery::dl_disconnect()
+{
+    // TODO: merge with Connected.
+    clear_iframe_queue();
+    d.rc = 0;
+    send_disc(true);
+    d.t3.stop();
+    d.t1.start();
     return std::make_unique<AwaitingRelease>(connection_);
 }
 } // namespace States
 
-void ConnectionState::send_ua(bool poll)
+void ConnectionState::clear_iframe_queue()
+{
+    d.iframe_queue_.clear();
+    d.iframe_resend_queue.clear();
+}
+
+void ConnectionState::send_ua(bool pf)
 {
     ax25::Packet packet;
     auto& ua = *packet.mutable_ua();
-    ua.set_poll(poll);
+    ua.set_poll(pf);
     connection_->send_packet(packet);
 }
 
@@ -727,6 +911,22 @@ void ConnectionState::send_sabm(bool poll)
     connection_->send_packet(packet);
 }
 
+void ConnectionState::send_dm(bool pf)
+{
+    ax25::Packet packet;
+    auto& dm = *packet.mutable_dm();
+    dm.set_poll(pf);
+    connection_->send_packet(packet);
+}
+
+void ConnectionState::send_disc(bool poll)
+{
+    ax25::Packet packet;
+    auto& disc = *packet.mutable_disc();
+    disc.set_poll(poll);
+    connection_->send_packet(packet);
+}
+
 void ConnectionState::send_sabme(bool poll)
 {
     ax25::Packet packet;
@@ -735,45 +935,50 @@ void ConnectionState::send_sabme(bool poll)
     connection_->send_packet(packet);
 }
 
-void ConnectionState::send_rr(bool poll, int nr)
+void ConnectionState::send_rr(bool pf, int nr, bool command)
 {
     ax25::Packet packet;
+    packet.set_command_response(command);
     auto& rr = *packet.mutable_rr();
-    rr.set_poll(poll);
+    rr.set_poll(pf);
     rr.set_nr(nr);
     connection_->send_packet(packet);
 }
 
-void ConnectionState::send_rej(bool poll, int nr)
+void ConnectionState::send_rej(bool pf, int nr)
 {
     ax25::Packet packet;
     auto& rej = *packet.mutable_rej();
-    rej.set_poll(poll);
+    rej.set_poll(pf);
     rej.set_nr(nr);
     connection_->send_packet(packet);
 }
 
-void ConnectionState::send_srej(bool poll, int nr)
+void ConnectionState::send_srej(bool pf, int nr)
 {
     ax25::Packet packet;
     auto& srej = *packet.mutable_srej();
-    srej.set_poll(poll);
+    srej.set_poll(pf);
     srej.set_nr(nr);
     connection_->send_packet(packet);
 }
 
-void ConnectionState::send_rnr(bool poll, int nr)
+void ConnectionState::send_rnr(bool pf, int nr)
 {
     ax25::Packet packet;
     auto& rnr = *packet.mutable_rnr();
-    rnr.set_poll(poll);
+    packet.set_command_response(true);
+    rnr.set_poll(pf);
     rnr.set_nr(nr);
     connection_->send_packet(packet);
 }
 
-Connection::Connection(send_func_t send)
-    : send_(send), state_(std::make_unique<States::Disconnected>(this))
+Connection::Connection(send_func_t send, receive_func_t receive)
+    : send_(send), receive_(receive), state_(std::make_unique<States::Disconnected>(this))
 {
+    data_.t1.set(3000);
+    data_.t2.set(3000);
+    data_.t3.set(300 * 1000);
 }
 
 ConnectionState::ConnectionState(Connection* connection)
@@ -783,40 +988,42 @@ ConnectionState::ConnectionState(Connection* connection)
 
 void ConnectionState::iframe_pop()
 {
-    if (d.peer_receiver_busy) {
-        // push frame on queue
-        return;
-    }
+    while (!d.iframe_queue_.empty()) {
+        if (d.peer_receiver_busy) {
+            // push frame on queue
+            return;
+        }
 
-    // Check window full.
-    if (d.vs == (d.va + d.k) % d.modulus) {
-        // push i frame on queue
-        return;
-    }
+        // Check window full.
+        if (d.vs == (d.va + d.k) % d.modulus) {
+            // push i frame on queue
+            return;
+        }
 
-    const auto ns = d.vs;
-    const auto nr = d.vr;
-    auto packet = d.iframe_queue_.front();
-    d.iframe_queue_.pop_front();
+        const auto ns = d.vs;
+        const auto nr = d.vr;
+        auto packet = d.iframe_queue_.front();
+        d.iframe_queue_.pop_front();
 
-    auto& iframe = *packet.mutable_iframe();
-    iframe.set_ns(ns);
-    iframe.set_nr(nr);
+        auto& iframe = *packet.mutable_iframe();
+        iframe.set_ns(ns);
+        iframe.set_nr(nr);
 
-    connection_->send_packet(packet);
+        connection_->send_packet(packet);
 
-    d.vs = (d.vs + 1) % d.modulus;
+        d.vs = (d.vs + 1) % d.modulus;
 
-    if (!d.t1.running()) {
-        d.t1.start();
-        d.t3.stop();
+        if (!d.t1.running()) {
+            d.t1.start();
+            d.t3.stop();
+        }
     }
 }
 
 ConnectionState::stateptr_t
 ConnectionState::connected_timer_recovery_disc(const ax25::Packet& p)
 {
-    d.iframe_queue_.clear();
+    clear_iframe_queue();
     const auto f = p.disc().poll();
     send_ua(f);
     std::cout << "DL-DISCONNECT indication\n";
@@ -825,12 +1032,30 @@ ConnectionState::connected_timer_recovery_disc(const ax25::Packet& p)
     return std::make_unique<States::Disconnected>(connection_);
 }
 
+void Connection::deliver(const ax25::Packet& p)
+{
+    assert(p.has_iframe());
+    std::clog << "> Delivering data of size " << p.iframe().payload().size() << "\n";
+    receive_(p.iframe().payload());
+}
+
 void Connection::send_packet(const ax25::Packet& packet)
 {
     auto p = packet;
+    p.set_command_response_la(!p.command_response());
     p.set_src(src_);
     p.set_dst(dst_);
     send_(p);
+}
+
+void Connection::state_change(std::unique_ptr<ConnectionState>&& st)
+{
+    if (st) {
+        state_ = std::move(st);
+        if (state_change_) {
+            state_change_(state_.get());
+        }
+    }
 }
 
 } // namespace seqpacket::con

@@ -79,10 +79,10 @@ std::string serialize(const ax25::Packet& packet)
                           packet.rr_dst1(),          // Not used?
                           false);                    // Possibly DAMA?
     ret += serialize_call(packet.src(),
-                          packet.repeater().empty(), // Maybe last.
-                          false,                     // Not used?
-                          packet.rr_extseq(),        // De facto extseq
-                          false);                    // DAMA?
+                          packet.repeater().empty(),    // Maybe last.
+                          packet.command_response_la(), // Inverse of Command/Response.
+                          packet.rr_extseq(),           // De facto extseq
+                          false);                       // DAMA?
     for (int i = 0; i < packet.repeater_size(); i++) {
         ret += serialize_call(packet.repeater(i).address(),
                               i == packet.repeater_size() - 1, // Maybe last.
@@ -98,7 +98,9 @@ std::string serialize(const ax25::Packet& packet)
         ret.push_back(control);
     }
     if (packet.has_sabme()) {
-        ret.push_back(0b011'0'11'11);
+        uint8_t control = 0b011'0'11'11;
+        control |= packet.sabme().poll() ? 0b00010000 : 0;
+        ret.push_back(control);
     }
     if (packet.has_disc()) {
         uint8_t control = 0b010'0'00'11;
@@ -106,10 +108,14 @@ std::string serialize(const ax25::Packet& packet)
         ret.push_back(control);
     }
     if (packet.has_dm()) {
-        ret.push_back(0b000'0'11'11);
+        uint8_t control = 0b000'0'11'11;
+        control |= packet.dm().poll() ? 0b00010000 : 0;
+        ret.push_back(control);
     }
     if (packet.has_ua()) {
-        ret.push_back(0b011'0'00'11);
+        uint8_t control = 0b011'0'00'11;
+        control |= packet.ua().poll() ? 0b00010000 : 0;
+        ret.push_back(control);
     }
     if (packet.has_rr()) {
         if (!packet.rr_extseq()) {
@@ -159,6 +165,8 @@ std::string serialize(const ax25::Packet& packet)
             ret.push_back(control1);
             ret.push_back(control2);
         }
+        uint8_t pid = packet.iframe().pid();
+        ret.push_back(pid);
         ret.append(packet.iframe().payload());
     }
     return ret;

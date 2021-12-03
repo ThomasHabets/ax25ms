@@ -43,28 +43,21 @@ ax25::Packet packet_base(bool cli, bool cr)
         p.set_dst(client);
     }
     p.set_command_response(cr);
+    p.set_command_response_la(!cr);
     return p;
 }
 
-ax25::Packet packet_rr(bool cli, int nr)
+ax25::Packet packet_rr(bool cli, int nr, bool pf, int cr)
 {
-    auto p = packet_base(cli, false);
+    auto p = packet_base(cli, cr);
     p.mutable_rr()->set_nr(nr);
-    p.mutable_rr()->set_poll(true);
-    return p;
-}
-
-ax25::Packet packet_rej(bool cli, int nr)
-{
-    auto p = packet_base(cli, false);
-    p.mutable_rej()->set_nr(nr);
-    p.mutable_rej()->set_poll(true);
+    p.mutable_rr()->set_poll(pf);
     return p;
 }
 
 ax25::Packet packet_sabm(bool cli)
 {
-    auto p = packet_base(cli, true);
+    auto p = packet_base(cli, false);
     p.mutable_sabm()->set_poll(true);
     return p;
 }
@@ -91,13 +84,22 @@ packet_iframe(bool cli, int nr, int ns, bool poll, bool cr, std::string_view pay
 
 } // namespace
 
-int main()
+void test_server()
 {
     std::vector<ax25::Packet> sent;
-    seqpacket::con::Connection con([&sent](const ax25::Packet& p) {
-        sent.push_back(p);
-        std::cout << "Sending packet: " << ax25ms::proto2string(p) << "\n";
-        return grpc::Status::OK;
+    std::vector<std::string> received;
+    seqpacket::con::Connection con(
+        [&sent](const ax25::Packet& p) {
+            sent.push_back(p);
+            std::cout << "Sending packet: " << ax25ms::proto2string(p) << "\n";
+            return grpc::Status::OK;
+        },
+        [&received](std::string_view p) {
+            received.push_back(std::string(p));
+            std::cout << "Received data: <" << p << ">\n";
+        });
+    con.set_state_change_cb([](seqpacket::con::ConnectionState* s) {
+        std::cout << ">>> State change to " << s->name() << "\n";
     });
 
     std::cout << "Connecting…\n";
@@ -113,22 +115,31 @@ int main()
     {
         ax25::Packet p;
         p.set_command_response(true);
+        p.mutable_iframe()->set_payload("blah");
         p.mutable_iframe()->set_ns(ns++);
         con.iframe(p);
     }
+    assert(received.size() == 1);
+    assert(received[0] == "blah");
+    received.clear();
+
     std::cout << "Receive data…\n";
     {
         ax25::Packet p;
         p.set_command_response(true);
+        p.mutable_iframe()->set_payload("blah2");
         p.mutable_iframe()->set_ns(ns++);
         con.iframe(p);
     }
+    assert(received.size() == 1);
+    assert(received[0] == "blah2");
+    received.clear();
     assert(sent.empty());
 
     std::cout << "Ticking timer: " << con.data().t1.running() << "\n";
     con.timer1_tick();
     assert(sent.size() == 1);
-    assert_eq(sent[0], packet_rr(false, 2));
+    assert_eq(sent[0], packet_rr(false, 2, true, false));
     sent.clear();
 
     std::cout << "Send data…\n";
@@ -155,4 +166,80 @@ int main()
     assert(sent.size() == 1);
     assert_eq(sent[0], packet_ua(false, false));
     sent.clear();
+}
+
+void test_client()
+{
+    std::vector<ax25::Packet> sent;
+    std::vector<std::string> received;
+    seqpacket::con::Connection con(
+        [&sent](const ax25::Packet& p) {
+            sent.push_back(p);
+            std::cout << "Sending packet: " << ax25ms::proto2string(p) << "\n";
+            return grpc::Status::OK;
+        },
+        [&received](std::string_view p) {
+            received.push_back(std::string(p));
+            std::cout << "Received data: <" << p << ">\n";
+        });
+    con.set_state_change_cb([](seqpacket::con::ConnectionState* s) {
+        std::cout << ">>> State change to " << s->name() << "\n";
+    });
+
+    std::cout << "Connecting…\n";
+    {
+        con.dl_connect(client, tester);
+    }
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_sabm(false));
+    sent.clear();
+
+    std::cout << "Connection accepted\n";
+    {
+        con.ua(packet_ua(false, true));
+    }
+    assert(sent.empty());
+    sent.clear();
+
+    std::cout << "--- Send data1…\n";
+    con.dl_data("hello");
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_iframe(false, 0, 0, false, true, "hello"));
+    sent.clear();
+
+    std::cout << "--- Send data2…\n";
+    con.dl_data("big");
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_iframe(false, 0, 1, false, true, "big"));
+    sent.clear();
+
+    std::cout << "--- Send data3…\n";
+    con.dl_data("world");
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_iframe(false, 0, 2, false, true, "world"));
+    sent.clear();
+
+    std::cout << "--- Put into timer recovery…\n";
+    con.timer1_tick();
+    assert(sent.size() == 1);
+    assert_eq(sent[0], packet_rr(false, 0, true, true));
+    sent.clear();
+
+    std::cout << "--- Tester replies that it only got first packet…\n";
+    con.rr(packet_rr(false, 1, true, false));
+    assert_eq(sent[0], packet_iframe(false, 0, 1, false, true, "big"));
+    assert_eq(sent[1], packet_iframe(false, 0, 2, false, true, "world"));
+    assert(sent.size() == 2);
+    sent.clear();
+
+    std::cout << "--- Tester replies that it only got first two packets…\n";
+    con.rr(packet_rr(false, 2, true, false));
+    assert(sent.size() == 1);
+    sent.clear();
+}
+
+int main()
+{
+    // test_server();
+    test_client();
 }

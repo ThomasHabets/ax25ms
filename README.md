@@ -29,21 +29,24 @@ pybind11 or SWIG.
 
 ## State of the code
 
-It's pretty messy. The packet scheduler needs to be written
-"properly", I'd say.
+Missing features:
+
+* REJ handling
+* SREJ handling and sending
+* Extended sequence numbers
+* Setting window size, timer lengths, etc…
+* Whole parts of the state machine are no-ops (though not all parts are needed)
 
 Still, I can't say it's more buggy than the Linux kernel
 implementation. E.g. you can DoS the kernel version by building up a
 window and them spamming REJ. You can send 10 REJs and the kernel
 implementation will re-send the whole window 10 times.
 
-[axsh][axsh] works on the client side.
+[axsh][axsh] works on the server and client side.
 
 ```
  tnc <KISS> serial <gRPC> seqpacket <gRPC> ax25ms_axsh
 ```
-
-Next up: Server side sockets (The `Accept` RPC).
 
 ## How to test it
 
