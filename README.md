@@ -34,7 +34,7 @@ Missing features:
 * REJ handling
 * SREJ handling and sending
 * Extended sequence numbers
-* Setting window size, timer lengths, etc…
+* Setting window size, timer lengths, digipeater list, etc…
 * Whole parts of the state machine are no-ops (though not all parts are needed)
 
 Still, I can't say it's more buggy than the Linux kernel
