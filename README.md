@@ -76,6 +76,13 @@ $ export AX25_ROUTER=localhost:12002  # seqpacket service location
 $ LD_PRELOAD=$(pwd)/libpreload.so axsh -r radio -s M0XXX-9 2E0XXX-3
 ```
 
+If that works you can make the `LD_PRELOAD` permanent on a binary with:
+
+```
+$ patchelf --add-needed $(pwd)/libpreload.so $(which axsh)
+```
+
+You'll still have to set `AX25_ADDR` and `AX25_ROUTER` of course.
 
 [rfc1226]: https://datatracker.ietf.org/doc/html/rfc1226
 [axsh]: https://github.com/ThomasHabets/radiostuff/tree/master/ax25/axsh
