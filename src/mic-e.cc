@@ -140,39 +140,41 @@ std::string abc_decode(int abc, bool custom, bool standard)
     return mice_message_types[std::make_pair(abc, custom)];
 }
 
-int long_deg(bool long_offset, unsigned char ch)
+std::pair<int, grpc::Status> long_deg(bool long_offset, unsigned char ch)
 {
     if (long_offset) {
         if (ch >= 118 && ch <= 127) {
-            return ch - 118;
+            return { ch - 118, grpc::Status::OK };
         }
         if (ch >= 108 && ch <= 117) {
-            return 100 + (ch - 108);
+            return { 100 + (ch - 108), grpc::Status::OK };
         }
         if (ch >= 38 && ch <= 107) {
-            return 110 + (ch - 38);
+            return { 110 + (ch - 38), grpc::Status::OK };
         }
     } else {
         if (ch >= 38 && ch <= 127) {
-            return 10 + (ch - 38);
+            return { 10 + (ch - 38), grpc::Status::OK };
         }
     }
-    throw std::runtime_error(std::string("long_deg out of bounds: ") +
-                             std::to_string(long_offset) + " " + std::to_string(ch));
+    return { 0,
+             grpc::Status(grpc::INVALID_ARGUMENT,
+                          "long_deg out of bounds: " + std::to_string(long_offset) + " " +
+                              std::to_string(ch)) };
 }
 
 
-int long_minute(unsigned char ch)
+std::pair<int, grpc::Status> long_minute(unsigned char ch)
 {
     if (ch >= 88 && ch <= 97) {
-        return ch - 88;
+        return { ch - 88, grpc::Status::OK };
     }
     if (ch >= 38 && ch <= 87) {
-        return ch - 37;
+        return { ch - 37, grpc::Status::OK };
     }
-    return 0;
-    throw std::runtime_error(std::string("long_minute out of bounds: ") +
-                             std::to_string(ch));
+    return { 0,
+             grpc::Status(grpc::INVALID_ARGUMENT,
+                          "long_minute out of bounds: " + std::to_string(ch)) };
 }
 
 bool set_longitude(aprs::Packet::Position& pos,
@@ -180,8 +182,14 @@ bool set_longitude(aprs::Packet::Position& pos,
                    std::string_view data,
                    char ew)
 {
-    int deg = long_deg(long_offset, data.at(0));
-    int min = long_minute(data.at(1));
+    auto [deg, st1] = long_deg(long_offset, data.at(0));
+    if (!st1.ok()) {
+        return false;
+    }
+    auto [min, st2] = long_minute(data.at(1));
+    if (!st2.ok()) {
+        return false;
+    }
     int centimin = data.at(2) - 28;
     std::stringstream ss;
     // if (deg < 90) {
