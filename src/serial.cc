@@ -152,6 +152,17 @@ public:
 
     void read_main()
     {
+        pthread_setname_np(pthread_self(), "serial-read");
+        for (;;) {
+            try {
+                read_main2();
+            } catch (const std::exception& e) {
+                std::cerr << "Read thread failed (restarting): " << e.what() << "\n";
+            }
+        }
+    }
+    void read_main2()
+    {
         std::vector<uint8_t> buf;
         enum class KISSState {
             UNKNOWN,
