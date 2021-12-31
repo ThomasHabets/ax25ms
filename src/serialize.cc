@@ -95,6 +95,9 @@ std::string serialize(const ax25::Packet& packet, bool fcs)
                               false); // Not used?
     }
 
+    // TODO: IL2P implies FRMR is always response. Check that here?
+    // (UI, XID and TEST can be either)
+
     // U frames.
     if (packet.has_ui()) {
         uint8_t control = 0b000'0'00'11;
@@ -104,26 +107,31 @@ std::string serialize(const ax25::Packet& packet, bool fcs)
         ret.append(packet.ui().payload());
     }
     if (packet.has_sabm()) {
+        // TODO: IL2P implies SABM is always command. Check that here?
         uint8_t control = 0b001'0'11'11;
         control |= packet.sabm().poll() ? 0b00010000 : 0;
         ret.push_back(control);
     }
     if (packet.has_sabme()) {
+        // TODO: IL2P implies SABME is always command. Check that here?
         uint8_t control = 0b011'0'11'11;
         control |= packet.sabme().poll() ? 0b00010000 : 0;
         ret.push_back(control);
     }
     if (packet.has_disc()) {
+        // TODO: IL2P implies DISC is always command. Check that here?
         uint8_t control = 0b010'0'00'11;
         control |= packet.disc().poll() ? 0b00010000 : 0;
         ret.push_back(control);
     }
     if (packet.has_dm()) {
+        // TODO: IL2P implies DM is always response. Check that here?
         uint8_t control = 0b000'0'11'11;
         control |= packet.dm().poll() ? 0b00010000 : 0;
         ret.push_back(control);
     }
     if (packet.has_ua()) {
+        // TODO: IL2P implies UA is always response. Check that here?
         uint8_t control = 0b011'0'00'11;
         control |= packet.ua().poll() ? 0b00010000 : 0;
         ret.push_back(control);
