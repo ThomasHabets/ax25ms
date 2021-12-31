@@ -247,7 +247,9 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
         break;
     default:
         // Unknown U frame.
-        return { ret, grpc::Status(grpc::INVALID_ARGUMENT, "unknown U frame") };
+        return { ret,
+                 grpc::Status(grpc::INVALID_ARGUMENT,
+                              "unknown U frame control " + std::to_string(control)) };
     }
     return { ret, grpc::Status::OK };
 }
