@@ -435,8 +435,30 @@ int Connection::setsockopt(int level, int optname, const void* optval, socklen_t
     case AX25_PACLEN:
         // TODO: set it.
         return 0;
-    }
+    case AX25_WINDOW:
+        // TODO: set it.
+        return 0;
+    case AX25_BACKOFF:
+        // TODO: set it.
+        return 0;
+    case AX25_T1:
+        // TODO: set it.
+        return 0;
+    case AX25_T2:
+        // TODO: set it.
+        return 0;
+    case AX25_T3:
+        // TODO: set it.
+        return 0;
+    case AX25_N2:
+        // TODO: set it.
+        return 0;
 
+    case AX25_HDRINCL:
+        // TODO: support this.
+        errno = EINVAL;
+        return -1;
+    }
     errno = EINVAL;
     return -1;
 }
