@@ -167,13 +167,19 @@ int wrapmain(int argc, char** argv)
 
     for (int i = optind; i < argc; i++) {
         const std::string fn = argv[i];
-        const auto payload = [fn]() -> std::string {
+        const auto [payload, ok] = [fn]() -> std::pair<std::string, bool> {
             std::ifstream f(fn);
+            if (!f.good()) {
+                std::cerr << "Failed to open " << fn << ": " << strerror(errno) << "\n";
+                return { "", false };
+            }
             std::stringstream buf;
             buf << f.rdbuf();
-            return buf.str();
+            return { buf.str(), true };
         }();
-
+        if (!ok) {
+            continue;
+        }
         auto [packet, status1] = ax25::parse(payload);
         if (!status1.ok()) {
             std::cerr << "Failed to parse packet: " << status1.error_message() << "\n";
