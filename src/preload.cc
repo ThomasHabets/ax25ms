@@ -453,11 +453,12 @@ int Connection::setsockopt(int level, int optname, const void* optval, socklen_t
     case AX25_N2:
         // TODO: set it.
         return 0;
-
+#if 0
     case AX25_HDRINCL:
         // TODO: support this.
         errno = EINVAL;
         return -1;
+#endif
     }
     errno = EINVAL;
     return -1;
