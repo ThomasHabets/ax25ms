@@ -45,29 +45,33 @@ limitations under the License.
 
 namespace {
 
-typedef int (*socket_func_t)(int, int, int);
-typedef ssize_t (*read_func_t)(int, void*, size_t);
-typedef ssize_t (*write_func_t)(int, const void*, size_t);
-typedef int (*bind_func_t)(int, const struct sockaddr*, socklen_t);
-typedef int (*connect_func_t)(int, const struct sockaddr*, socklen_t);
-typedef int (*getsockopt_func_t)(int, int, int, void*, socklen_t*);
-typedef int (*setsockopt_func_t)(int, int, int, const void*, socklen_t);
-typedef int (*close_func_t)(int);
+// Override function types.
+using socket_func_t = int (*)(int, int, int);
+using read_func_t = ssize_t (*)(int, void*, size_t);
+using write_func_t = ssize_t (*)(int, const void*, size_t);
+using bind_func_t = int (*)(int, const struct sockaddr*, socklen_t);
+using connect_func_t = int (*)(int, const struct sockaddr*, socklen_t);
+using getsockopt_func_t = int (*)(int, int, int, void*, socklen_t*);
+using setsockopt_func_t = int (*)(int, int, int, const void*, socklen_t);
+using close_func_t = int (*)(int);
 
-static socket_func_t orig_socket = nullptr;
-static read_func_t orig_read = nullptr;
-static write_func_t orig_write = nullptr;
-static bind_func_t orig_bind = nullptr;
-static connect_func_t orig_connect = nullptr;
-static getsockopt_func_t orig_getsockopt = nullptr;
-static setsockopt_func_t orig_setsockopt = nullptr;
-static close_func_t orig_close = nullptr;
+// Saved original function pointers.
+socket_func_t orig_socket = nullptr;
+read_func_t orig_read = nullptr;
+write_func_t orig_write = nullptr;
+bind_func_t orig_bind = nullptr;
+connect_func_t orig_connect = nullptr;
+getsockopt_func_t orig_getsockopt = nullptr;
+setsockopt_func_t orig_setsockopt = nullptr;
+close_func_t orig_close = nullptr;
 
-const char* log_prefix = "preload: ";
-
+// Parameters settable via env.
 char* radio_addr = nullptr;  // AX25_ADDR
 char* router_addr = nullptr; // AX25_ROUTER
 char* debug = nullptr;       // AX25_DEBUG
+
+// Other consts.
+const char* log_prefix = "preload: ";
 
 std::ostream& log()
 {
@@ -81,10 +85,15 @@ std::ostream& log()
         *f << log_prefix;
         return *f;
     }
+    // A benefit of writing to /dev/null is that it'll still be
+    // visible in strace.
     static std::ofstream null("/dev/null");
     return null;
 }
 
+// Pipe represents two fds connected together. It's actually used
+// with a socketpair(), so that select() works for both read and
+// write.
 class Pipe
 {
 public:
@@ -149,6 +158,10 @@ private:
 };
 
 
+/*
+ * Connection represents one socket and connection throughout its
+ * lifetime.
+ */
 class Connection
 {
 public:
@@ -179,7 +192,6 @@ private:
     bool read_stop_ = false; // There is no stream_ctx_.IsCancelled()
                              // (?), so need this bool.
 
-
     Pipe fds_;
     int type_;
     int protocol_;
@@ -194,10 +206,15 @@ private:
     std::string src_;
 
     // Put read_thread_ last so that all other member variables are
-    // initialized.
+    // initialized. And on destruction no other member function will
+    // be destroyed until the thread has ended.
     std::jthread read_thread_;
 };
 
+/*
+ * Connections keeps a map of all the Connection instances, thread
+ * safe.
+ */
 class Connections
 {
 public:
@@ -205,6 +222,7 @@ public:
     using val_t = std::unique_ptr<Connection>;
     using map_t = std::map<key_t, val_t>;
 
+    // Get connection by fd.
     Connection* get(int fd);
     void insert(std::pair<key_t, val_t>&& val);
     map_t::node_type extract(key_t val);
@@ -269,10 +287,9 @@ __attribute__((constructor)) void init()
     debug = getenv("AX25_DEBUG");
 }
 
-
 std::pair<int, int> make_fds()
 {
-    // Create a dummy fd just to reserve the fd.
+    // Create a signalling fd pair for things like select().
     int fds[2];
     if (-1 == socketpair(PF_LOCAL, SOCK_STREAM, 0, fds)) {
         throw std::runtime_error(std::string("socketpair(): ") + strerror(errno));
@@ -293,7 +310,6 @@ ax25ms::SeqPacketService::Stub* router()
     return ret.get();
 }
 
-
 Connection::Connection(int type, int protocol)
     : fds_(make_fds()),
       type_(type),
@@ -308,6 +324,7 @@ Connection::~Connection()
     read_stop_ = true;
     stream_ctx_.TryCancel(); // End ongoing and future stream_->Read().
     read_queue_cv_.notify_all();
+    // read_thread_ is a jthread, so no need to wait for it to exit.
 }
 
 void Connection::read_thread_main()
@@ -331,7 +348,7 @@ void Connection::read_thread_main()
                 return read_queue_.size() < 10 || read_stop_; // TODO: max value
             });
             if (read_stop_) {
-                std::cerr << "HABETS read queue ending\n";
+                log() << "Read queue ending\n";
                 break;
             }
             read_queue_.push_back(resp);
@@ -340,7 +357,7 @@ void Connection::read_thread_main()
         fds_.write_handler_fd("x");
     }
     // TODO: Finish() and stuff.
-    log() << "stream ended\n";
+    log() << "Stream ended\n";
     fds_.close_handler_fd();
 }
 
@@ -381,6 +398,7 @@ ssize_t Connection::write(const void* buf, size_t count)
     ax25ms::SeqConnectRequest req;
     req.mutable_packet()->set_payload(buf, count);
     if (!stream_->Write(req)) {
+        // TODO: log more info.
         errno = ECONNRESET;
         return -1;
     }
@@ -408,6 +426,7 @@ int Connection::getsockopt(int level, int optname, void* optval, socklen_t* optl
         memcpy(optval, &paclen_, sizeof(int));
         *optlen = sizeof(int);
         return 0;
+        // TODO: support the other options.
     }
 
     errno = EINVAL;
