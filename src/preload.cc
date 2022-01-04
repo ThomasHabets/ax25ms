@@ -545,24 +545,40 @@ int ax25_config_get_paclen(char*)
 {
     return 200; // TODO;
 }
+
 int ax25_config_get_window(char*)
 {
     return 3; // TODO;
 }
+
 char* ax25_config_get_port(ax25_address*)
 {
     return const_cast<char*>("radio"); // TODO;
 }
+
 char* ax25_config_get_dev(char*)
 {
     return const_cast<char*>("radio"); // TODO;
 }
+
 char* ax25_config_get_next(char* p)
 {
     if (p) {
         return nullptr;
     }
     return const_cast<char*>("radio"); // TODO;
+}
+
+// WARNING: not reentrant.
+char* ax25_config_get_desc(char*)
+{
+    static char buf[1024] = { 0 };
+    snprintf(buf,
+             sizeof(buf),
+             "ax25ms LD_PRELOAD port using radio %s, router %s",
+             radio_addr,
+             router_addr);
+    return buf;
 }
 
 char* ax25_config_get_addr(char*) { return radio_addr; }
