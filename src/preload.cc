@@ -66,9 +66,9 @@ setsockopt_func_t orig_setsockopt = nullptr;
 close_func_t orig_close = nullptr;
 
 // Parameters settable via env.
-char* radio_addr = nullptr;  // AX25_ADDR
-char* router_addr = nullptr; // AX25_ROUTER
-char* debug = nullptr;       // AX25_DEBUG
+std::string radio_addr;              // AX25_ADDR
+std::string router_addr;             // AX25_ROUTER
+std::unique_ptr<std::ostream> debug; // AX25_DEBUG
 
 // Other consts.
 const char* log_prefix = "preload: ";
@@ -76,14 +76,8 @@ const char* log_prefix = "preload: ";
 std::ostream& log()
 {
     if (debug) {
-        static std::ofstream* f = nullptr;
-        if (!f) {
-            f = new std::ofstream;
-            f->rdbuf()->pubsetbuf(0, 0);
-            f->open(debug);
-        }
-        *f << log_prefix;
-        return *f;
+        *debug << log_prefix;
+        return *debug;
     }
     // A benefit of writing to /dev/null is that it'll still be
     // visible in strace.
@@ -261,9 +255,13 @@ bool Connections::insert(val_t&& con)
     return ok;
 }
 
-__attribute__((constructor)) void init()
+void init()
 {
-    fprintf(stderr, "%sinit\n", log_prefix);
+    if (auto e = getenv("AX25_DEBUG"); e) {
+        debug = std::make_unique<std::ofstream>(e);
+    }
+    log() << "Initializing\n";
+
     orig_socket = reinterpret_cast<socket_func_t>(dlsym(RTLD_NEXT, "socket"));
     orig_read = reinterpret_cast<read_func_t>(dlsym(RTLD_NEXT, "read"));
     orig_write = reinterpret_cast<write_func_t>(dlsym(RTLD_NEXT, "write"));
@@ -288,8 +286,12 @@ __attribute__((constructor)) void init()
     } else {
         router_addr = strdup(e);
     }
+}
 
-    debug = getenv("AX25_DEBUG");
+void init_once()
+{
+    static std::once_flag flag;
+    std::call_once(flag, [] { init(); });
 }
 
 std::pair<int, int> make_fds()
@@ -561,32 +563,38 @@ extern "C" {
 
 int ax25_config_load_ports(void)
 {
+    init_once();
     // One port.
     return 1;
 }
 
 int ax25_config_get_paclen(char*)
 {
+    init_once();
     return 200; // TODO;
 }
 
 int ax25_config_get_window(char*)
 {
+    init_once();
     return 3; // TODO;
 }
 
 char* ax25_config_get_port(ax25_address*)
 {
+    init_once();
     return const_cast<char*>("radio"); // TODO;
 }
 
 char* ax25_config_get_dev(char*)
 {
+    init_once();
     return const_cast<char*>("radio"); // TODO;
 }
 
 char* ax25_config_get_next(char* p)
 {
+    init_once();
     if (p) {
         return nullptr;
     }
@@ -596,21 +604,31 @@ char* ax25_config_get_next(char* p)
 // WARNING: not reentrant.
 char* ax25_config_get_desc(char*)
 {
+    init_once();
     static char buf[1024] = { 0 };
     snprintf(buf,
              sizeof(buf),
              "ax25ms LD_PRELOAD port using radio %s, router %s",
-             radio_addr,
-             router_addr);
+             radio_addr.c_str(),
+             router_addr.c_str());
     return buf;
 }
 
-int ax25_config_get_baud(char*) { return 1200; }
+int ax25_config_get_baud(char*)
+{
+    init_once();
+    return 1200;
+}
 
-char* ax25_config_get_addr(char*) { return radio_addr; }
+char* ax25_config_get_addr(char*)
+{
+    init_once();
+    return const_cast<char*>(radio_addr.c_str());
+}
 
 int socket(int domain, int type, int protocol)
 {
+    init_once();
     if (domain != AF_AX25) {
         assert(orig_socket);
         return orig_socket(domain, type, protocol);
@@ -628,6 +646,7 @@ int socket(int domain, int type, int protocol)
 
 int close(int fd)
 {
+    init_once();
     if (!connections.get(fd)) {
         assert(orig_close);
         return orig_close(fd);
@@ -640,6 +659,7 @@ int close(int fd)
 
 int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)
 {
+    init_once();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_bind);
@@ -651,6 +671,7 @@ int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)
 
 int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
 {
+    init_once();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_connect);
@@ -662,6 +683,7 @@ int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
 
 ssize_t read(int fd, void* buf, size_t count)
 {
+    init_once();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_read);
@@ -675,6 +697,7 @@ ssize_t read(int fd, void* buf, size_t count)
 
 ssize_t write(int fd, const void* buf, size_t count)
 {
+    init_once();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_write);
@@ -686,6 +709,7 @@ ssize_t write(int fd, const void* buf, size_t count)
 
 int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
 {
+    init_once();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_getsockopt);
@@ -697,6 +721,7 @@ int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
 
 int setsockopt(int fd, int level, int optname, const void* optval, socklen_t optlen)
 {
+    init_once();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_setsockopt);
