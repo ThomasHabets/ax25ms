@@ -581,6 +581,8 @@ char* ax25_config_get_desc(char*)
     return buf;
 }
 
+int ax25_config_get_baud(char*) { return 1200; }
+
 char* ax25_config_get_addr(char*) { return radio_addr; }
 
 int socket(int domain, int type, int protocol)
