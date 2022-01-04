@@ -21,6 +21,8 @@ PKG_PROG_PKG_CONFIG
 # Check for libraries.
 AC_LANG_CPLUSPLUS
 
+AC_CHECK_LIB([pthread], [pthread_setname_np])
+
 AC_CHECK_PROG([PROTOC], [protoc], [protoc])
 #LDFLAGS="$LDFLAGS -lgrpc++"
 AS_IF([test "x${PROTOC}" == "x"],
