@@ -67,13 +67,19 @@ const char* log_prefix = "preload: ";
 
 char* radio_addr = nullptr;  // AX25_ADDR
 char* router_addr = nullptr; // AX25_ROUTER
-bool debug = false;          // AX25_DEBUG
+char* debug = nullptr;       // AX25_DEBUG
 
 std::ostream& log()
 {
     if (debug) {
-        std::clog << log_prefix;
-        return std::clog;
+        static std::ofstream* f = nullptr;
+        if (!f) {
+            f = new std::ofstream;
+            f->rdbuf()->pubsetbuf(0, 0);
+            f->open(debug);
+        }
+        *f << log_prefix;
+        return *f;
     }
     static std::ofstream null("/dev/null");
     return null;
@@ -178,7 +184,7 @@ private:
     int type_;
     int protocol_;
     bool extseq_ = false;
-    int paclen_ = 256; // TODO
+    int paclen_ = 200; // TODO
     grpc::ClientContext stream_ctx_;
 
     std::unique_ptr<
@@ -260,9 +266,7 @@ __attribute__((constructor)) void init()
         router_addr = strdup(e);
     }
 
-    if (getenv("AX25_DEBUG")) {
-        debug = true;
-    }
+    debug = getenv("AX25_DEBUG");
 }
 
 
@@ -413,11 +417,13 @@ int Connection::getsockopt(int level, int optname, void* optval, socklen_t* optl
 int Connection::setsockopt(int level, int optname, const void* optval, socklen_t optlen)
 {
     if (level != SOL_AX25) {
+        log() << "setsockopt(UNKNOWN)\n";
         errno = ENOSYS;
         return -1;
     }
 
     if (optlen == 0) {
+        log() << "setsockopt(SOL_AX25, , , zero length)\n";
         errno = EINVAL;
         return -1;
     }
@@ -430,28 +436,36 @@ int Connection::setsockopt(int level, int optname, const void* optval, socklen_t
         } else {
             extseq_ = true;
         }
+        log() << "setsockopt(SOL_AX25, AX25_EXTSEQ, " << extseq_ << ")\n";
         return 0;
     }
     case AX25_PACLEN:
         // TODO: set it.
+        log() << "setsockopt(SOL_AX25, AX25_PACLEN)\n";
         return 0;
     case AX25_WINDOW:
         // TODO: set it.
+        log() << "setsockopt(SOL_AX25, AX25_WINDOW)\n";
         return 0;
     case AX25_BACKOFF:
         // TODO: set it.
+        log() << "setsockopt(SOL_AX25, AX25_BACKOFF)\n";
         return 0;
     case AX25_T1:
         // TODO: set it.
+        log() << "setsockopt(SOL_AX25, AX25_T1)\n";
         return 0;
     case AX25_T2:
         // TODO: set it.
+        log() << "setsockopt(SOL_AX25, AX25_T2)\n";
         return 0;
     case AX25_T3:
         // TODO: set it.
+        log() << "setsockopt(SOL_AX25, AX25_T3)\n";
         return 0;
     case AX25_N2:
         // TODO: set it.
+        log() << "setsockopt(SOL_AX25, AX25_N2)\n";
         return 0;
 #if 0
     case AX25_HDRINCL:
@@ -460,6 +474,7 @@ int Connection::setsockopt(int level, int optname, const void* optval, socklen_t
         return -1;
 #endif
     }
+    log() << "setsockopt(SOL_AX25, UNKNOWN)\n";
     errno = EINVAL;
     return -1;
 }
@@ -524,6 +539,30 @@ int ax25_config_load_ports(void)
 {
     // One port.
     return 1;
+}
+
+int ax25_config_get_paclen(char*)
+{
+    return 200; // TODO;
+}
+int ax25_config_get_window(char*)
+{
+    return 3; // TODO;
+}
+char* ax25_config_get_port(ax25_address*)
+{
+    return const_cast<char*>("radio"); // TODO;
+}
+char* ax25_config_get_dev(char*)
+{
+    return const_cast<char*>("radio"); // TODO;
+}
+char* ax25_config_get_next(char* p)
+{
+    if (p) {
+        return nullptr;
+    }
+    return const_cast<char*>("radio"); // TODO;
 }
 
 char* ax25_config_get_addr(char*) { return radio_addr; }
@@ -617,7 +656,7 @@ int setsockopt(int fd, int level, int optname, const void* optval, socklen_t opt
         assert(orig_setsockopt);
         return orig_setsockopt(fd, level, optname, optval, optlen);
     }
-    log() << "setsockopt(AF_AX25)\n";
+    // log() << "setsockopt(AF_AX25)\n";
     return con->setsockopt(level, optname, optval, optlen);
 }
 } // extern "C"
