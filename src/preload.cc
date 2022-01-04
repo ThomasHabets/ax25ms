@@ -257,44 +257,44 @@ bool Connections::insert(val_t&& con)
 
 void init()
 {
-    if (auto e = getenv("AX25_DEBUG"); e) {
-        auto t = std::make_unique<std::ofstream>();
-        t->rdbuf()->pubsetbuf(0, 0);
-        t->open(e);
-        debug = std::move(t);
-    }
-    log() << "Initializing\n";
-
-    orig_socket = reinterpret_cast<socket_func_t>(dlsym(RTLD_NEXT, "socket"));
-    orig_read = reinterpret_cast<read_func_t>(dlsym(RTLD_NEXT, "read"));
-    orig_write = reinterpret_cast<write_func_t>(dlsym(RTLD_NEXT, "write"));
-    orig_bind = reinterpret_cast<bind_func_t>(dlsym(RTLD_NEXT, "bind"));
-    orig_connect = reinterpret_cast<connect_func_t>(dlsym(RTLD_NEXT, "connect"));
-    orig_getsockopt = reinterpret_cast<getsockopt_func_t>(dlsym(RTLD_NEXT, "getsockopt"));
-    orig_setsockopt = reinterpret_cast<setsockopt_func_t>(dlsym(RTLD_NEXT, "setsockopt"));
-    orig_close = reinterpret_cast<close_func_t>(dlsym(RTLD_NEXT, "close"));
-
-    if (auto e = getenv("AX25_ADDR"); e == nullptr) {
-        fprintf(stderr, "%sError: AX25_ADDR not set. Setting 'INVALID'\n", log_prefix);
-        radio_addr = strdup("INVALID");
-    } else {
-        radio_addr = strdup(e);
-    }
-
-    if (auto e = getenv("AX25_ROUTER"); e == nullptr) {
-        fprintf(stderr,
-                "%sError: AX25_ROUTER not set. Setting 'localhost:12345'\n",
-                log_prefix);
-        router_addr = strdup("localhost:12345");
-    } else {
-        router_addr = strdup(e);
-    }
-}
-
-void init_once()
-{
     static std::once_flag flag;
-    std::call_once(flag, [] { init(); });
+    std::call_once(flag, [] {
+        if (auto e = getenv("AX25_DEBUG"); e) {
+            auto t = std::make_unique<std::ofstream>();
+            t->rdbuf()->pubsetbuf(0, 0);
+            t->open(e);
+            debug = std::move(t);
+        }
+        log() << "Initializing\n";
+
+        orig_socket = reinterpret_cast<socket_func_t>(dlsym(RTLD_NEXT, "socket"));
+        orig_read = reinterpret_cast<read_func_t>(dlsym(RTLD_NEXT, "read"));
+        orig_write = reinterpret_cast<write_func_t>(dlsym(RTLD_NEXT, "write"));
+        orig_bind = reinterpret_cast<bind_func_t>(dlsym(RTLD_NEXT, "bind"));
+        orig_connect = reinterpret_cast<connect_func_t>(dlsym(RTLD_NEXT, "connect"));
+        orig_getsockopt =
+            reinterpret_cast<getsockopt_func_t>(dlsym(RTLD_NEXT, "getsockopt"));
+        orig_setsockopt =
+            reinterpret_cast<setsockopt_func_t>(dlsym(RTLD_NEXT, "setsockopt"));
+        orig_close = reinterpret_cast<close_func_t>(dlsym(RTLD_NEXT, "close"));
+
+        if (auto e = getenv("AX25_ADDR"); e == nullptr) {
+            fprintf(
+                stderr, "%sError: AX25_ADDR not set. Setting 'INVALID'\n", log_prefix);
+            radio_addr = strdup("INVALID");
+        } else {
+            radio_addr = strdup(e);
+        }
+
+        if (auto e = getenv("AX25_ROUTER"); e == nullptr) {
+            fprintf(stderr,
+                    "%sError: AX25_ROUTER not set. Setting 'localhost:12345'\n",
+                    log_prefix);
+            router_addr = strdup("localhost:12345");
+        } else {
+            router_addr = strdup(e);
+        }
+    });
 }
 
 std::pair<int, int> make_fds()
@@ -566,38 +566,38 @@ extern "C" {
 
 int ax25_config_load_ports(void)
 {
-    init_once();
+    init();
     // One port.
     return 1;
 }
 
 int ax25_config_get_paclen(char*)
 {
-    init_once();
+    init();
     return 200; // TODO;
 }
 
 int ax25_config_get_window(char*)
 {
-    init_once();
+    init();
     return 3; // TODO;
 }
 
 char* ax25_config_get_port(ax25_address*)
 {
-    init_once();
+    init();
     return const_cast<char*>("radio"); // TODO;
 }
 
 char* ax25_config_get_dev(char*)
 {
-    init_once();
+    init();
     return const_cast<char*>("radio"); // TODO;
 }
 
 char* ax25_config_get_next(char* p)
 {
-    init_once();
+    init();
     if (p) {
         return nullptr;
     }
@@ -607,7 +607,7 @@ char* ax25_config_get_next(char* p)
 // WARNING: not reentrant.
 char* ax25_config_get_desc(char*)
 {
-    init_once();
+    init();
     static char buf[1024] = { 0 };
     snprintf(buf,
              sizeof(buf),
@@ -619,19 +619,19 @@ char* ax25_config_get_desc(char*)
 
 int ax25_config_get_baud(char*)
 {
-    init_once();
+    init();
     return 1200;
 }
 
 char* ax25_config_get_addr(char*)
 {
-    init_once();
+    init();
     return const_cast<char*>(radio_addr.c_str());
 }
 
 int socket(int domain, int type, int protocol)
 {
-    init_once();
+    init();
     if (domain != AF_AX25) {
         assert(orig_socket);
         return orig_socket(domain, type, protocol);
@@ -649,7 +649,7 @@ int socket(int domain, int type, int protocol)
 
 int close(int fd)
 {
-    init_once();
+    init();
     if (!connections.get(fd)) {
         assert(orig_close);
         return orig_close(fd);
@@ -662,7 +662,7 @@ int close(int fd)
 
 int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)
 {
-    init_once();
+    init();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_bind);
@@ -674,7 +674,7 @@ int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)
 
 int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
 {
-    init_once();
+    init();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_connect);
@@ -686,7 +686,7 @@ int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
 
 ssize_t read(int fd, void* buf, size_t count)
 {
-    init_once();
+    init();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_read);
@@ -700,7 +700,7 @@ ssize_t read(int fd, void* buf, size_t count)
 
 ssize_t write(int fd, const void* buf, size_t count)
 {
-    init_once();
+    init();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_write);
@@ -712,7 +712,7 @@ ssize_t write(int fd, const void* buf, size_t count)
 
 int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
 {
-    init_once();
+    init();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_getsockopt);
@@ -724,7 +724,7 @@ int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
 
 int setsockopt(int fd, int level, int optname, const void* optval, socklen_t optlen)
 {
-    init_once();
+    init();
     auto con = connections.get(fd);
     if (!con) {
         assert(orig_setsockopt);
