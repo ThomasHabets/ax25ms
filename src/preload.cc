@@ -224,7 +224,10 @@ public:
 
     // Get connection by fd.
     Connection* get(int fd);
-    void insert(std::pair<key_t, val_t>&& val);
+
+    // Insert a new connection keyed by its fd.
+    // Caller does not
+    bool insert(val_t&& con);
     map_t::node_type extract(key_t val);
 
 private:
@@ -250,10 +253,12 @@ Connections::map_t::node_type Connections::extract(key_t val)
     return connections_.extract(val);
 }
 
-void Connections::insert(std::pair<key_t, val_t>&& val)
+bool Connections::insert(val_t&& con)
 {
     std::unique_lock<std::mutex> lk(mu_);
-    connections_.insert(std::move(val));
+    const auto fd = con->fd();
+    const auto [_, ok] = connections_.insert({ fd, std::move(con) });
+    return ok;
 }
 
 __attribute__((constructor)) void init()
@@ -613,7 +618,11 @@ int socket(int domain, int type, int protocol)
     log() << "socket(AF_AX25)\n";
     auto con = std::make_unique<Connection>(type, protocol);
     const auto fd = con->fd();
-    connections.insert({ fd, std::move(con) });
+    if (!connections.insert(std::move(con))) {
+        log() << "Failed to insert new connection into connection map";
+        errno = EBADFD;
+        return -1;
+    }
     return fd;
 }
 
