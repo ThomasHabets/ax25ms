@@ -38,7 +38,28 @@ limitations under the License.
 // Third party.
 #include <grpcpp/grpcpp.h>
 
+namespace {
+template <typename Func>
+class Defer
+{
+public:
+    Defer(Func&& func) : func_(std::move(func)) {}
+
+    // No move of copy.
+    Defer(const Defer&) = delete;
+    Defer(Defer&&) = delete;
+    Defer& operator=(const Defer&) = delete;
+    Defer& operator=(Defer&&) = delete;
+
+    ~Defer() { func_(); }
+
+private:
+    Func func_;
+};
+} // namespace
+
 using seqpacket::con::Connection;
+
 
 namespace ax25ms {
 
@@ -394,6 +415,10 @@ public:
             }
             return itr->second.get();
         }());
+        Defer er([this, &src, &dst] {
+            std::unique_lock<std::mutex> lk(mu_);
+            connections_.erase({ src, dst });
+        });
 
         ce.apply([&src, &dst](auto& con) { con.dl_connect(dst, src); });
         ce.await_state_not(seqpacket::con::StateNames::AwaitingConnection);
@@ -431,11 +456,6 @@ public:
         }
         std::clog << "Connection ended\n";
         ce.apply([](auto& con) { con.dl_disconnect(); });
-        receive_thread.join();
-        {
-            std::unique_lock<std::mutex> lk(mu_);
-            connections_.erase({ src, dst });
-        }
         return grpc::Status::OK;
     }
 
