@@ -258,7 +258,10 @@ bool Connections::insert(val_t&& con)
 void init()
 {
     if (auto e = getenv("AX25_DEBUG"); e) {
-        debug = std::make_unique<std::ofstream>(e);
+        auto t = std::make_unique<std::ofstream>();
+        t->rdbuf()->pubsetbuf(0, 0);
+        t->open(e);
+        debug = std::move(t);
     }
     log() << "Initializing\n";
 
