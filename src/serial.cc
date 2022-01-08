@@ -235,7 +235,7 @@ public:
             }
             for (;;) {
                 auto frame = q->pop(); // TODO: also wait for stream to end.
-                std::clog << "  Sending to client\n";
+                // std::clog << "  Sending to client\n";
                 if (!writer->Write(*frame)) {
                     break;
                 }
@@ -265,12 +265,7 @@ public:
         auto p = data.data();
         auto size = data.size();
         std::unique_lock<std::mutex> lk(serial_mu_);
-        std::cerr << "Sending packet of size " << size << "\n";
-        for (auto ch : data) {
-            std::cout << std::hex << std::setw(2) << std::setfill('0')
-                      << (static_cast<unsigned int>(ch) & 0xff) << " ";
-        }
-        std::cout << "\n";
+        std::cerr << "RPC -> Serial (size " << size << ") :" << str2hex(data) << "\n";
         while (size > 0) {
             const auto rc = ::write(serial_.get(), p, size);
             if (rc == -1) {
@@ -280,14 +275,15 @@ public:
             size -= rc;
             p += rc;
         }
-        std::cerr << "Packet sent\n";
+        // std::cerr << "Packet sent\n";
         return grpc::Status::OK;
     }
 
 private:
     void inject(ax25ms::Frame f)
     {
-        std::clog << "Injecting with size " << f.payload().size() << "\n";
+        std::clog << "Serial -> RPC (size " << f.payload().size()
+                  << "): " << str2hex(f.payload()) << "\n";
         std::lock_guard<std::mutex> l(mu_);
         for (auto w = queues_.begin(); w != queues_.end();) {
             auto s = w->lock();
@@ -296,7 +292,7 @@ private:
                 w = queues_.erase(w);
                 continue;
             }
-            std::clog << "  Added to queue\n";
+            // std::clog << "  Added to queue\n";
             s->push(std::make_shared<ax25ms::Frame>(f));
             ++w;
         }
