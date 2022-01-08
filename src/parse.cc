@@ -46,19 +46,27 @@ constexpr int modulus_extended = 128;
 namespace {
 // Return call, command/response or has-been-repeated, status, done.
 std::tuple<std::string, bool, bool, bool, grpc::Status, bool>
-parse_call(const std::string& d)
+parse_call(std::string_view d)
 {
     std::string call;
     for (int i = 0; i < 6; i++) {
         const char ch = (d.at(i) >> 1) & ~0x80;
         const char bit = d.at(i) & 1;
         if (bit) {
-            return { "",
-                     false,
-                     false,
-                     false,
-                     grpc::Status(grpc::UNKNOWN, "callsign msb was not 0"),
-                     false };
+            if (false) {
+                // For debugging it can be worth trying to continue even
+                // with this error.
+                std::clog << "Callsign msb was not 0 at pos " << i << ": "
+                          << ax25ms::str2hex(d) << "\n";
+            } else {
+                return { "",
+                         false,
+                         false,
+                         false,
+                         grpc::Status(grpc::UNKNOWN,
+                                      "callsign msb was not 0: " + ax25ms::str2hex(d)),
+                         false };
+            }
         }
         // std::cerr << "byte:
         if (ch != ' ') {
@@ -118,7 +126,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
     int pos = 0;
 
     {
-        const auto [dst, top, rr1, rr2, err, done] = parse_call(data.substr(pos));
+        const auto [dst, top, rr1, rr2, err, done] = parse_call(data.substr(pos, 7));
         if (!err.ok()) {
             return { ret, err };
         }
@@ -132,7 +140,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
     }
 
     // Source.
-    auto [src, top, rr1, rr2, err, done] = parse_call(data.substr(pos));
+    auto [src, top, rr1, rr2, err, done] = parse_call(data.substr(pos, 7));
     if (!err.ok()) {
         return { ret, err };
     }
@@ -147,7 +155,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
     // The spec also says that paths are being phased out. But APRS
     // relies heavily on paths, so I don't see that happening.
     while (!done) {
-        const auto [digi, top, rr1, rr2, err, d] = parse_call(data.substr(pos));
+        const auto [digi, top, rr1, rr2, err, d] = parse_call(data.substr(pos, 7));
         done = d;
         if (!err.ok()) {
             return { ret, err };
