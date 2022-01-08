@@ -25,7 +25,10 @@ limitations under the License.
 #include "parse.h"
 #include "proto/gen/api.pb.h"
 #include "proto/gen/ax25.pb.h"
+
 #include <grpcpp/grpcpp.h>
+
+#include <iomanip>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -292,6 +295,19 @@ std::pair<aprs::Packet, grpc::Status> parse_status_report(std::string_view data)
 
 } // namespace
 
+std::string serialize(const aprs::Packet& aprs)
+{
+    if (aprs.has_msg()) {
+        auto& m = aprs.msg();
+        std::stringstream ss;
+        ss << ":" << std::setw(9) << std::left << m.dst() << ":" << m.msg();
+        if (auto n = m.msg_number(); n.size()) {
+            ss << "{" << n;
+        }
+        return ss.str();
+    }
+    throw "UNIMPLEMENTED";
+}
 
 // Decode APRS from message data only.
 std::pair<aprs::Packet, grpc::Status> parse(std::string_view data)

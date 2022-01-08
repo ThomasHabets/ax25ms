@@ -96,6 +96,13 @@ std::string serialize(const ax25::Packet& packet, bool fcs)
     }
 
     // U frames.
+    if (packet.has_ui()) {
+        uint8_t control = 0b000'0'00'11;
+        control |= packet.ui().push() ? 0b000'1'00'00 : 0;
+        ret.push_back(control);
+        ret.push_back(packet.ui().pid());
+        ret.append(packet.ui().payload());
+    }
     if (packet.has_sabm()) {
         uint8_t control = 0b001'0'11'11;
         control |= packet.sabm().poll() ? 0b00010000 : 0;

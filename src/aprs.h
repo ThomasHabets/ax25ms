@@ -19,5 +19,6 @@ limitations under the License.
 #include <string_view>
 
 namespace aprs {
+std::string serialize(const aprs::Packet& aprs);
 std::pair<aprs::Packet, grpc::Status> parse(std::string_view);
-}
+} // namespace aprs

@@ -12,6 +12,7 @@ seqpacket \
 decode \
 seqpacket_client \
 seqpacket_server \
+generate \
 router_hub
 lib_LTLIBRARIES=libpreload.la
 
@@ -89,6 +90,19 @@ src/serialize.cc \
 src/parse.cc \
 src/scheduler.cc \
 src/util.cc \
+src/fcs.cc \
+proto/gen/ax25.pb.cc \
+proto/gen/aprs.pb.cc \
+proto/gen/api.grpc.pb.cc \
+proto/gen/api.pb.cc
+
+generate_SOURCES=\
+src/main.cc \
+src/generate.cc \
+src/serialize.cc \
+src/util.cc \
+src/aprs.cc \
+src/parse.cc \
 src/fcs.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
