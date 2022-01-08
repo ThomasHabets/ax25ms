@@ -17,5 +17,5 @@ limitations under the License.
 
 #include <string>
 namespace ax25 {
-std::string serialize(const ax25::Packet& packet);
+std::string serialize(const ax25::Packet& packet, bool fcs);
 }

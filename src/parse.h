@@ -19,6 +19,6 @@ limitations under the License.
 #include <string>
 
 namespace ax25 {
-std::pair<ax25::Packet, grpc::Status> parse(const std::string& data);
+std::pair<ax25::Packet, grpc::Status> parse(std::string_view data, bool fcs);
 std::pair<std::string, bool> normalize_call(std::string_view in);
 } // namespace ax25

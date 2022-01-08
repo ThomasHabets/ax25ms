@@ -18,10 +18,14 @@ limitations under the License.
  * Inverse of parse.
  * Main specs: http://www.tapr.org/pdf/AX25.2.2.pdf
  */
+#include "fcs.h"
+
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
 #include "proto/gen/ax25.pb.h"
+
 #include <grpcpp/grpcpp.h>
+
 #include <cstdlib>
 #include <fstream>
 #include <regex>
@@ -69,7 +73,7 @@ std::string serialize_call(
 }
 } // namespace
 
-std::string serialize(const ax25::Packet& packet)
+std::string serialize(const ax25::Packet& packet, bool fcs)
 {
     std::string ret;
 
@@ -168,6 +172,13 @@ std::string serialize(const ax25::Packet& packet)
         uint8_t pid = packet.iframe().pid();
         ret.push_back(pid);
         ret.append(packet.iframe().payload());
+    }
+
+    if (fcs) {
+        // TODO: optionally send with broken FCS?
+        const auto crc = ax25ms::fcs(ret);
+        ret.push_back(crc.first);
+        ret.push_back(crc.second);
     }
     return ret;
 }

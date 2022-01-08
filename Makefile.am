@@ -4,7 +4,15 @@ AM_CPPFLAGS=-I$(builddir)
 
 TESTS=serial_test seqpacket_con_test
 check_PROGRAMS=$(TESTS)
-bin_PROGRAMS=listen serial seqpacket decode seqpacket_client seqpacket_server router_hub
+bin_PROGRAMS=\
+listen \
+serial \
+calc_fcs \
+seqpacket \
+decode \
+seqpacket_client \
+seqpacket_server \
+router_hub
 lib_LTLIBRARIES=libpreload.la
 
 libpreload_la_SOURCES=\
@@ -22,17 +30,23 @@ listen_SOURCES=\
 src/main.cc \
 src/listen.cc \
 src/parse.cc \
+src/fcs.cc \
 src/mic-e.cc \
 src/util.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \
 proto/gen/api.pb.cc
+calc_fcs_SOURCES=\
+src/main.cc \
+src/calc_fcs.cc \
+src/fcs.cc
 
 router_hub_SOURCES=\
 src/main.cc \
 src/router_hub.cc \
 src/parse.cc \
+src/fcs.cc \
 src/mic-e.cc \
 src/util.cc \
 proto/gen/ax25.pb.cc \
@@ -47,6 +61,7 @@ src/parse.cc \
 src/mic-e.cc \
 src/aprs.cc \
 src/util.cc \
+src/fcs.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \
@@ -74,6 +89,7 @@ src/serialize.cc \
 src/parse.cc \
 src/scheduler.cc \
 src/util.cc \
+src/fcs.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \
@@ -86,6 +102,7 @@ src/serialize.cc \
 src/parse.cc \
 src/scheduler.cc \
 src/util.cc \
+src/fcs.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \

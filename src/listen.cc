@@ -20,6 +20,7 @@ limitations under the License.
  * Service. This includes the serial port tool.
  */
 #include "mic-e.h"
+#include "parse.h"
 #include "util.h"
 
 #include "proto/gen/api.grpc.pb.h"
@@ -35,11 +36,10 @@ limitations under the License.
 #include <sstream>
 #include <string>
 
-namespace ax25 {
-std::pair<ax25::Packet, grpc::Status> parse(const std::string& data);
-}
-
 namespace {
+
+constexpr bool fcs = true;
+
 [[noreturn]] void usage(const char* av0, int err)
 {
     std::cout << av0 << ": Usage [ -h ] -r <router host:port>\n";
@@ -68,7 +68,7 @@ void run(grpc::ClientReader<ax25ms::Frame>* reader)
         std::clog << "Got frame size " << payload.size() << ": "
                   << ax25ms::str2hex(payload) << "\n";
 
-        auto [packet, status] = ax25::parse(frame.payload());
+        auto [packet, status] = ax25::parse(frame.payload(), fcs);
         if (!status.ok()) {
             std::cerr << "Failed to parse packet: " << status.error_message() << "\n";
         } else {

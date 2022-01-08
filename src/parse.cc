@@ -18,11 +18,13 @@ limitations under the License.
  * Main specs: http://www.tapr.org/pdf/AX25.2.2.pdf
  */
 // org/info/freqspec.txt
+#include "fcs.h"
 #include "util.h"
 
 #include "proto/gen/ax25.pb.h"
 
 #include <grpcpp/grpcpp.h>
+
 #include <cinttypes>
 #include <regex>
 #include <string>
@@ -115,13 +117,35 @@ std::pair<std::string, bool> normalize_call(std::string_view in)
     return { trim(c) + "-" + std::to_string(ssid), true };
 }
 
+unsigned long reflect(unsigned long crc, int bitnum)
+{
+
+    // reflects the lower 'bitnum' bits of 'crc'
+    unsigned long i, j = 1, crcout = 0;
+    for (i = (unsigned long)1 << (bitnum - 1); i; i >>= 1) {
+        if (crc & i)
+            crcout |= j;
+        j <<= 1;
+    }
+    return (crcout);
+}
+
 // Return packet, success.
-std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
+std::pair<ax25::Packet, grpc::Status> parse(std::string_view fulldata, bool fcs)
 {
     ax25::Packet ret;
     // 3.9a. 136/8-2 bytes.
-    if (data.size() < 15) {
+    if (fulldata.size() < 15) {
         return { ret, grpc::Status(grpc::UNKNOWN, "packet too small") };
+    }
+    std::string_view data = fulldata;
+    if (fcs) {
+        const auto [data2, crc16, crcok] = ax25ms::check_fcs(fulldata);
+        if (!crcok) {
+            return { ret, grpc::Status(grpc::UNKNOWN, "CRC error") };
+        }
+        data = data2;
+        ret.set_fcs(crc16);
     }
 
     int pos = 0;
@@ -183,7 +207,8 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
             iframe.set_ns((control >> 1) & 0x7f);
         }
         iframe.set_pid(static_cast<uint8_t>(data.at(pos++)));
-        iframe.set_payload(data.substr(pos));
+        const auto t = data.substr(pos);
+        iframe.set_payload(t.data(), t.size());
         return { ret, grpc::Status::OK };
 
     } else if ((control & 3) == 1) {
@@ -220,7 +245,8 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
     case 0b000'0'0011: {            // UI
         auto ui = ret.mutable_ui();
         ui->set_pid(static_cast<unsigned int>(data.at(pos++)) & 0xFF);
-        ui->set_payload(data.substr(pos));
+        const auto t = data.substr(pos);
+        ui->set_payload(t.data(), t.size());
         ui->set_push(control & 0b00010000);
         break;
     }
@@ -247,7 +273,8 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
     case 0b111'0'11'11: { // TEST
         auto test = ret.mutable_test();
         test->set_push(control & 0b00010000);
-        test->set_info(data.substr(pos));
+        const auto info = data.substr(pos);
+        test->set_info(info.data(), info.size());
         break;
     }
     case 0b100'0'01'11: // FRMR

@@ -30,7 +30,7 @@ message Packet {
   string dst = 1;
   string src = 2;
   repeated Repeater repeater = 3;
-  int32 fcs = 4; // 4.4.6. I've not seen this used, though.
+  int32 fcs = 4;
 
   message SABME {
     bool poll = 1;

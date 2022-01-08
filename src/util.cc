@@ -59,6 +59,13 @@ LogLine::LogLine(LogLine&& rhs)
 {
 }
 
+LogLine& LogLine::operator=(LogLine&& rhs)
+{
+    system_now_ = rhs.system_now_;
+    out_ = std::exchange(rhs.out_, nullptr);
+    return *this;
+}
+
 LogLine log() { return LogLine(); }
 
 } // namespace ax25ms

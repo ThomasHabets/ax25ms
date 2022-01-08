@@ -35,12 +35,13 @@ limitations under the License.
 #include <sstream>
 #include <string>
 
-
 namespace {
+
+bool fcs = true; // -f to set false
 
 [[noreturn]] void usage(const char* av0, int err)
 {
-    std::cout << av0 << ": Usage [ -h ] <input files...>\n";
+    std::cout << "Usage: " << av0 << ": [ -fh ] <input files...>\n";
     exit(err);
 }
 
@@ -155,10 +156,13 @@ int wrapmain(int argc, char** argv)
 {
     {
         int opt;
-        while ((opt = getopt(argc, argv, "h")) != -1) {
+        while ((opt = getopt(argc, argv, "hf")) != -1) {
             switch (opt) {
             case 'h':
                 usage(argv[0], EXIT_SUCCESS);
+            case 'f':
+                fcs = false;
+                break;
             default:
                 usage(argv[0], EXIT_FAILURE);
             }
@@ -180,9 +184,10 @@ int wrapmain(int argc, char** argv)
         if (!ok) {
             continue;
         }
-        auto [packet, status1] = ax25::parse(payload);
+        auto [packet, status1] = ax25::parse(payload, fcs);
         if (!status1.ok()) {
-            std::cerr << "Failed to parse packet: " << status1.error_message() << "\n";
+            std::cerr << "Failed to parse packet in " << fn << ": "
+                      << status1.error_message() << "\n";
             continue;
         }
 

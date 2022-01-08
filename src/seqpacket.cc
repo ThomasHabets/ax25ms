@@ -39,6 +39,12 @@ limitations under the License.
 #include <grpcpp/grpcpp.h>
 
 namespace {
+
+// Default: FCS neither in nor out.
+// Change with -f <in|out|both>
+bool fcs_in = false;
+bool fcs_out = false;
+
 template <typename Func>
 class Defer
 {
@@ -224,7 +230,7 @@ public:
     SeqPacketImpl(ax25ms::RouterService::Stub* router) : router_(router) {}
     void packet_callback(const ax25ms::Frame& frame)
     {
-        const auto [packet, status] = ax25::parse(frame.payload());
+        const auto [packet, status] = ax25::parse(frame.payload(), fcs_in);
         if (!status.ok()) {
             log() << "Parse error for frame: " << status.error_message();
             return;
@@ -371,7 +377,7 @@ public:
 
     grpc::Status send(const ax25::Packet& p)
     {
-        const auto data = ax25::serialize(p);
+        const auto data = ax25::serialize(p, fcs_out);
 
         ax25ms::SendRequest sreq;
         sreq.mutable_frame()->set_payload(data);
@@ -472,7 +478,9 @@ private:
 namespace {
 [[noreturn]] void usage(const char* av0, int err)
 {
-    std::cout << av0 << ": Usage [ -h ] [ -l <listen address> ] -r <router host:port>\n";
+    std::cout << "Usage: " << av0
+              << " [ -f <no|in|out|both> ] [ -h ] [ -l <listen address> ]\n"
+              << "    -r <router host:port>\n";
     exit(err);
 }
 } // namespace
@@ -485,7 +493,7 @@ int wrapmain(int argc, char** argv)
     std::string listen = "[::]:12346";
     {
         int opt;
-        while ((opt = getopt(argc, argv, "hr:l:")) != -1) {
+        while ((opt = getopt(argc, argv, "hr:l:f:")) != -1) {
             switch (opt) {
             case 'r':
                 router = optarg;
@@ -493,6 +501,26 @@ int wrapmain(int argc, char** argv)
             case 'l':
                 listen = optarg;
                 break;
+            case 'f': {
+                const std::string fcs = optarg;
+                if (fcs == "no") {
+                    fcs_in = false;
+                    fcs_out = false;
+                }
+                if (fcs == "in") {
+                    fcs_in = true;
+                    fcs_out = false;
+                }
+                if (fcs == "out") {
+                    fcs_in = false;
+                    fcs_out = true;
+                }
+                if (fcs == "both") {
+                    fcs_in = true;
+                    fcs_out = true;
+                }
+                break;
+            }
             case 'h':
                 usage(argv[0], EXIT_SUCCESS);
             default:
@@ -526,10 +554,10 @@ int wrapmain(int argc, char** argv)
             packet.mutable_disc()->set_poll(true);
         }
         packet.set_command_response(true);
-        auto data = ax25::serialize(packet);
+        auto data = ax25::serialize(packet, fcs_out);
 
 
-        auto parsed = ax25::parse(data);
+        auto parsed = ax25::parse(data, fcs_in);
         std::cout << ax25ms::proto2string(packet);
 
         ax25ms::SendRequest req;
