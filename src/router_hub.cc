@@ -43,14 +43,14 @@ namespace ax25ms::router::hub {
 class Hub final : public ax25ms::RouterService::Service
 {
 public:
-    Hub() { std::clog << "Hub starting...\n"; }
+    Hub() { log() << "Hub starting..."; }
 
     grpc::Status StreamFrames(grpc::ServerContext* ctx,
                               const ax25ms::StreamRequest* req,
                               grpc::ServerWriter<ax25ms::Frame>* writer) override
     {
         try {
-            std::clog << "Registering listener\n";
+            log() << "Registering listener";
             {
                 std::lock_guard<std::mutex> l(mu_);
                 clients_.insert(writer);
@@ -65,13 +65,13 @@ public:
                 sleep(1);
             }
             clients_.erase(writer);
-            std::cerr << "Stream stop\n";
+            log() << "Stream stop";
             return grpc::Status::OK;
         } catch (const std::exception& e) {
-            std::cerr << "Exception: " << e.what() << "\n";
+            log() << "Exception: " << e.what();
             return grpc::Status(grpc::StatusCode::UNAVAILABLE, e.what());
         } catch (...) {
-            std::cerr << "Unknown Exception\n";
+            log() << "Unknown Exception";
             return grpc::Status(grpc::StatusCode::UNAVAILABLE, "unknown exception");
         }
     }
@@ -81,14 +81,14 @@ public:
                       ax25ms::SendResponse* out) override
     {
         std::unique_lock<std::mutex> lk(mu_);
-        std::clog << "Packet being sent to " << clients_.size() << " clients\n";
+        log() << "Packet being sent to " << clients_.size() << " clients";
         for (auto& c : clients_) {
             ax25ms::SendResponse resp;
             if (!c->Write(req->frame())) {
-                std::cerr << "failed to send to a client\n";
+                log() << "failed to send to a client";
             }
         }
-        std::clog << "… done\n";
+        log() << "… done";
         return grpc::Status::OK;
     }
 
@@ -102,6 +102,7 @@ private:
 int wrapmain(int argc, char** argv)
 {
     using namespace ax25ms::router::hub;
+    using ax25ms::log;
 
     std::string listen = "[::]:12345";
     {
@@ -119,7 +120,7 @@ int wrapmain(int argc, char** argv)
         }
     }
     if (optind != argc) {
-        std::cerr << "Invalid extra args on the command line\n";
+        log() << "Invalid extra args on the command line";
         return EXIT_FAILURE;
     }
 
@@ -139,7 +140,7 @@ int wrapmain(int argc, char** argv)
     builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
-    std::clog << "Running…\n";
+    log() << "Running…";
     server->Wait();
     return 0;
 }

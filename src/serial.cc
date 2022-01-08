@@ -147,7 +147,7 @@ public:
         : port_(port), serial_(open_serial(port)), reader_([this] { read_main(); })
     {
         // TODO: remove. This is debugging.
-        std::clog << "Serial starting...\n";
+        log() << "Serial starting...";
     }
 
     void read_main()
@@ -157,7 +157,7 @@ public:
             try {
                 read_main2();
             } catch (const std::exception& e) {
-                std::cerr << "Read thread failed (restarting): " << e.what() << "\n";
+                log() << "Read thread failed (restarting): " << e.what();
             }
         }
     }
@@ -182,13 +182,13 @@ public:
                 std::array<char, 1024> tbuf;
                 const auto rc = ::read(serial_.get(), tbuf.data(), tbuf.size());
                 if (rc == 0) {
-                    std::cerr << "Serial port EOF. Attempting to reopen…\n";
+                    log() << "Serial port EOF. Attempting to reopen…";
                     for (;;) {
                         std::this_thread::sleep_for(std::chrono::seconds{ 1 });
                         try {
                             serial_ = open_serial(port_);
                         } catch (const std::runtime_error& e) {
-                            std::cerr << "… still trying\n";
+                            log() << "… still trying";
                         }
                     }
                     return;
@@ -212,7 +212,7 @@ public:
                         frame.set_payload(data.data() + 1, data.size() - 1);
                         inject(frame);
                     } else {
-                        std::cerr << "TODO: got frame with some L3 stuff\n";
+                        log() << "TODO: got frame with some L3 stuff";
                     }
                 }
             }
@@ -227,7 +227,7 @@ public:
                               grpc::ServerWriter<ax25ms::Frame>* writer) override
     {
         try {
-            std::clog << "Registering listener\n";
+            log() << "Registering listener";
             auto q = std::make_shared<Queue>();
             {
                 std::lock_guard<std::mutex> l(mu_);
@@ -235,18 +235,18 @@ public:
             }
             for (;;) {
                 auto frame = q->pop(); // TODO: also wait for stream to end.
-                // std::clog << "  Sending to client\n";
+                // log() << "  Sending to client";
                 if (!writer->Write(*frame)) {
                     break;
                 }
             }
-            std::cerr << "Stream stop\n";
+            log() << "Stream stop";
             return grpc::Status::OK;
         } catch (const std::exception& e) {
-            std::cerr << "Exception: " << e.what() << "\n";
+            log() << "Exception: " << e.what();
             return grpc::Status(grpc::StatusCode::UNAVAILABLE, e.what());
         } catch (...) {
-            std::cerr << "Unknown Exception\n";
+            log() << "Unknown Exception";
             return grpc::Status(grpc::StatusCode::UNAVAILABLE, "unknown exception");
         }
     }
@@ -265,7 +265,7 @@ public:
         auto p = data.data();
         auto size = data.size();
         std::unique_lock<std::mutex> lk(serial_mu_);
-        std::cerr << "RPC -> Serial (size " << size << ") :" << str2hex(data) << "\n";
+        log() << "RPC -> Serial (size " << size << ") :" << str2hex(data);
         while (size > 0) {
             const auto rc = ::write(serial_.get(), p, size);
             if (rc == -1) {
@@ -275,24 +275,24 @@ public:
             size -= rc;
             p += rc;
         }
-        // std::cerr << "Packet sent\n";
+        // log() << "Packet sent";
         return grpc::Status::OK;
     }
 
 private:
     void inject(ax25ms::Frame f)
     {
-        std::clog << "Serial -> RPC (size " << f.payload().size()
-                  << "): " << str2hex(f.payload()) << "\n";
+        log() << "Serial -> RPC (size " << f.payload().size()
+              << "): " << str2hex(f.payload());
         std::lock_guard<std::mutex> l(mu_);
         for (auto w = queues_.begin(); w != queues_.end();) {
             auto s = w->lock();
             if (!s) {
-                std::clog << "  Dead entry\n";
+                log() << "  Dead entry";
                 w = queues_.erase(w);
                 continue;
             }
-            // std::clog << "  Added to queue\n";
+            // log() << "  Added to queue";
             s->push(std::make_shared<ax25ms::Frame>(f));
             ++w;
         }
@@ -348,6 +348,7 @@ FDWrap open_serial(std::string_view portv)
 int wrapmain(int argc, char** argv)
 {
     using namespace ax25ms::serial;
+    using ax25ms::log;
 
     std::string port;
     std::string listen = "[::]:12345";
@@ -369,11 +370,11 @@ int wrapmain(int argc, char** argv)
         }
     }
     if (port.empty()) {
-        std::cerr << "Need to specify serial port (-p)\n";
+        log() << "Need to specify serial port (-p)";
         return EXIT_FAILURE;
     }
     if (optind != argc) {
-        std::cerr << "Invalid extra args on the command line\n";
+        log() << "Invalid extra args on the command line";
         return EXIT_FAILURE;
     }
 
@@ -393,7 +394,7 @@ int wrapmain(int argc, char** argv)
     builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
-    std::clog << "Running…\n";
+    ax25ms::log() << "Running…";
     server->Wait();
     return 0;
 }

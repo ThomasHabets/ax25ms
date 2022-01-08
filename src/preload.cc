@@ -19,6 +19,8 @@ limitations under the License.
 #include "proto/gen/ax25.grpc.pb.h"
 #include "proto/gen/ax25.pb.h"
 
+#include "util.h"
+
 // Third party.
 #include <grpcpp/grpcpp.h>
 
@@ -70,19 +72,11 @@ std::string radio_addr;              // AX25_ADDR
 std::string router_addr;             // AX25_ROUTER
 std::unique_ptr<std::ostream> debug; // AX25_DEBUG
 
-// Other consts.
-const char* log_prefix = "preload: ";
-
-std::ostream& log()
+ax25ms::LogLine log()
 {
-    if (debug) {
-        *debug << log_prefix;
-        return *debug;
-    }
-    // A benefit of writing to /dev/null is that it'll still be
-    // visible in strace.
-    static std::ofstream null("/dev/null");
-    return null;
+    auto l = ax25ms::log();
+    l.set_output(debug.get());
+    return l;
 }
 
 // Pipe represents two fds connected together. It's actually used
@@ -265,7 +259,7 @@ void init()
             t->open(e);
             debug = std::move(t);
         }
-        log() << "Initializing\n";
+        log() << "Initializing";
 
         orig_socket = reinterpret_cast<socket_func_t>(dlsym(RTLD_NEXT, "socket"));
         orig_read = reinterpret_cast<read_func_t>(dlsym(RTLD_NEXT, "read"));
@@ -279,18 +273,15 @@ void init()
         orig_close = reinterpret_cast<close_func_t>(dlsym(RTLD_NEXT, "close"));
 
         if (auto e = getenv("AX25_ADDR"); e == nullptr) {
-            fprintf(
-                stderr, "%sError: AX25_ADDR not set. Setting 'INVALID'\n", log_prefix);
+            log() << "Error: AX25_ADDR not set. Setting 'INVALID'";
             radio_addr = strdup("INVALID");
         } else {
             radio_addr = strdup(e);
         }
 
         if (auto e = getenv("AX25_ROUTER"); e == nullptr) {
-            fprintf(stderr,
-                    "%sError: AX25_ROUTER not set. Setting 'localhost:12345'\n",
-                    log_prefix);
-            router_addr = strdup("localhost:12345");
+            log() << "Error: AX25_ROUTER not set. Setting 'localhost:12345'",
+                router_addr = strdup("localhost:12345");
         } else {
             router_addr = strdup(e);
         }
@@ -358,7 +349,7 @@ void Connection::read_thread_main()
                 return read_queue_.size() < 10 || read_stop_; // TODO: max value
             });
             if (read_stop_) {
-                log() << "Read queue ending\n";
+                log() << "Read queue ending";
                 break;
             }
             read_queue_.push_back(resp);
@@ -367,7 +358,7 @@ void Connection::read_thread_main()
         fds_.write_handler_fd("x");
     }
     // TODO: Finish() and stuff.
-    log() << "Stream ended\n";
+    log() << "Stream ended";
     fds_.close_handler_fd();
 }
 
@@ -446,13 +437,13 @@ int Connection::getsockopt(int level, int optname, void* optval, socklen_t* optl
 int Connection::setsockopt(int level, int optname, const void* optval, socklen_t optlen)
 {
     if (level != SOL_AX25) {
-        log() << "setsockopt(UNKNOWN)\n";
+        log() << "setsockopt(UNKNOWN)";
         errno = ENOSYS;
         return -1;
     }
 
     if (optlen == 0) {
-        log() << "setsockopt(SOL_AX25, , , zero length)\n";
+        log() << "setsockopt(SOL_AX25, , , zero length)";
         errno = EINVAL;
         return -1;
     }
@@ -465,36 +456,36 @@ int Connection::setsockopt(int level, int optname, const void* optval, socklen_t
         } else {
             extseq_ = true;
         }
-        log() << "setsockopt(SOL_AX25, AX25_EXTSEQ, " << extseq_ << ")\n";
+        log() << "setsockopt(SOL_AX25, AX25_EXTSEQ, " << extseq_ << ")";
         return 0;
     }
     case AX25_PACLEN:
         // TODO: set it.
-        log() << "setsockopt(SOL_AX25, AX25_PACLEN)\n";
+        log() << "setsockopt(SOL_AX25, AX25_PACLEN)";
         return 0;
     case AX25_WINDOW:
         // TODO: set it.
-        log() << "setsockopt(SOL_AX25, AX25_WINDOW)\n";
+        log() << "setsockopt(SOL_AX25, AX25_WINDOW)";
         return 0;
     case AX25_BACKOFF:
         // TODO: set it.
-        log() << "setsockopt(SOL_AX25, AX25_BACKOFF)\n";
+        log() << "setsockopt(SOL_AX25, AX25_BACKOFF)";
         return 0;
     case AX25_T1:
         // TODO: set it.
-        log() << "setsockopt(SOL_AX25, AX25_T1)\n";
+        log() << "setsockopt(SOL_AX25, AX25_T1)";
         return 0;
     case AX25_T2:
         // TODO: set it.
-        log() << "setsockopt(SOL_AX25, AX25_T2)\n";
+        log() << "setsockopt(SOL_AX25, AX25_T2)";
         return 0;
     case AX25_T3:
         // TODO: set it.
-        log() << "setsockopt(SOL_AX25, AX25_T3)\n";
+        log() << "setsockopt(SOL_AX25, AX25_T3)";
         return 0;
     case AX25_N2:
         // TODO: set it.
-        log() << "setsockopt(SOL_AX25, AX25_N2)\n";
+        log() << "setsockopt(SOL_AX25, AX25_N2)";
         return 0;
 #if 0
     case AX25_HDRINCL:
@@ -503,7 +494,7 @@ int Connection::setsockopt(int level, int optname, const void* optval, socklen_t
         return -1;
 #endif
     }
-    log() << "setsockopt(SOL_AX25, UNKNOWN)\n";
+    log() << "setsockopt(SOL_AX25, UNKNOWN)";
     errno = EINVAL;
     return -1;
 }
@@ -536,8 +527,7 @@ int Connection::connect(const struct sockaddr* addr, socklen_t addrlen)
         extseq_);
     stream_ = router()->Connect(&stream_ctx_);
     if (!stream_->Write(req)) {
-        std::clog << "Failed to start connect RPC: " << stream_->Finish().error_message()
-                  << "\n";
+        log() << "Failed to start connect RPC: " << stream_->Finish().error_message();
         errno = ECOMM;
         return -1;
     }
@@ -636,7 +626,7 @@ int socket(int domain, int type, int protocol)
         assert(orig_socket);
         return orig_socket(domain, type, protocol);
     }
-    log() << "socket(AF_AX25)\n";
+    log() << "socket(AF_AX25)";
     auto con = std::make_unique<Connection>(type, protocol);
     const auto fd = con->fd();
     if (!connections.insert(std::move(con))) {
@@ -654,7 +644,7 @@ int close(int fd)
         assert(orig_close);
         return orig_close(fd);
     }
-    log() << "close(AF_AX25)\n";
+    log() << "close(AF_AX25)";
 
     connections.extract(fd);
     return 0;
@@ -668,7 +658,7 @@ int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)
         assert(orig_bind);
         return orig_bind(fd, addr, addrlen);
     }
-    log() << "bind(AF_AX25)\n";
+    log() << "bind(AF_AX25)";
     return con->bind(addr, addrlen);
 }
 
@@ -680,7 +670,7 @@ int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
         assert(orig_connect);
         return orig_connect(fd, addr, addrlen);
     }
-    log() << "connect(AF_AX25)\n";
+    log() << "connect(AF_AX25)";
     return con->connect(addr, addrlen);
 }
 
@@ -692,9 +682,9 @@ ssize_t read(int fd, void* buf, size_t count)
         assert(orig_read);
         return orig_read(fd, buf, count);
     }
-    log() << "read(AF_AX25,, " << count << ")\n";
+    log() << "read(AF_AX25,, " << count << ")";
     const auto rc = con->read(buf, count);
-    log() << "… read(AF_AX25) = " << rc << "\n";
+    log() << "… read(AF_AX25) = " << rc << "";
     return rc;
 }
 
@@ -706,7 +696,7 @@ ssize_t write(int fd, const void* buf, size_t count)
         assert(orig_write);
         return orig_write(fd, buf, count);
     }
-    log() << "write(AF_AX25, , " << count << ")\n";
+    log() << "write(AF_AX25, , " << count << ")";
     return con->write(buf, count);
 }
 
@@ -718,7 +708,7 @@ int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
         assert(orig_getsockopt);
         return orig_getsockopt(fd, level, optname, optval, optlen);
     }
-    log() << "getsockopt(AF_AX25)\n";
+    log() << "getsockopt(AF_AX25)";
     return con->getsockopt(level, optname, optval, optlen);
 }
 
@@ -730,7 +720,7 @@ int setsockopt(int fd, int level, int optname, const void* optval, socklen_t opt
         assert(orig_setsockopt);
         return orig_setsockopt(fd, level, optname, optval, optlen);
     }
-    // log() << "setsockopt(AF_AX25)\n";
+    // log() << "setsockopt(AF_AX25)";
     return con->setsockopt(level, optname, optval, optlen);
 }
 } // extern "C"

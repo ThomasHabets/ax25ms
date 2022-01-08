@@ -15,6 +15,7 @@ limitations under the License.
 */
 #include "util.h"
 
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -30,5 +31,34 @@ std::string str2hex(std::string_view data)
     }
     return ss.str();
 }
+
+LogLine::LogLine() : system_now_(std::time(nullptr)), out_(&std::cerr) {}
+
+LogLine::~LogLine()
+{
+    std::stringstream ss;
+    ss << "ax25ms " << std::put_time(std::localtime(&system_now_), "%F %T") << " "
+       << s_.str() << "\n";
+
+    if (!out_) {
+        // A benefit of writing to /dev/null is that it'll still be
+        // visible in strace.
+        static std::mutex mu;
+        static std::ofstream null("/dev/null");
+        std::unique_lock<std::mutex> lk(mu);
+        null << ss.str();
+    } else {
+        static std::mutex mu;
+        std::unique_lock<std::mutex> lk(mu);
+        *out_ << ss.str();
+    }
+}
+
+LogLine::LogLine(LogLine&& rhs)
+    : system_now_(rhs.system_now_), out_(std::exchange(rhs.out_, nullptr))
+{
+}
+
+LogLine log() { return LogLine(); }
 
 } // namespace ax25ms

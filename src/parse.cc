@@ -27,6 +27,8 @@ limitations under the License.
 #include <regex>
 #include <string>
 
+using ax25ms::log;
+
 std::string trim(std::string_view in)
 {
     if (in.empty()) {
@@ -56,8 +58,8 @@ parse_call(std::string_view d)
             if (false) {
                 // For debugging it can be worth trying to continue even
                 // with this error.
-                std::clog << "Callsign msb was not 0 at pos " << i << ": "
-                          << ax25ms::str2hex(d) << "\n";
+                log() << "Callsign msb was not 0 at pos " << i << ": "
+                      << ax25ms::str2hex(d);
             } else {
                 return { "",
                          false,
@@ -68,7 +70,6 @@ parse_call(std::string_view d)
                          false };
             }
         }
-        // std::cerr << "byte:
         if (ch != ' ') {
             call.push_back(ch);
         }
@@ -82,7 +83,7 @@ parse_call(std::string_view d)
     if (ssid) {
         call += "-" + std::to_string(ssid);
     }
-    // std::cerr << "parsed: <" << call << ">" << call.size() << "\n";
+    // log() << "parsed: <" << call << ">" << call.size();
     return { call, top_bit, rr1, rr2, grpc::Status::OK, done };
 }
 
@@ -208,7 +209,7 @@ std::pair<ax25::Packet, grpc::Status> parse(const std::string& data)
         s->set_poll(control & 0b00010000);
         const auto rest = data.substr(pos);
         if (!rest.empty()) {
-            std::clog << "S Frame with data? I see " << ax25ms::str2hex(data) << "\n";
+            log() << "S Frame with data? I see " << ax25ms::str2hex(data);
         }
         return { ret, grpc::Status::OK };
     }

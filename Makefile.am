@@ -9,6 +9,7 @@ lib_LTLIBRARIES=libpreload.la
 
 libpreload_la_SOURCES=\
 src/preload.cc \
+src/util.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \

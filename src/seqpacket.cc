@@ -113,7 +113,7 @@ public:
         : con_(cb, [this](std::string_view p) { deliver(p); })
     {
         con_.set_state_change_cb([this](seqpacket::con::ConnectionState* s) {
-            std::clog << ">>> State => " << s->name() << "\n";
+            log() << ">>> State => " << s->name();
             // Lock is already held at this point, because everything con_ does is
             // protected.
             // std::unique_lock<std::mutex> lk(mu_);
@@ -226,7 +226,7 @@ public:
     {
         const auto [packet, status] = ax25::parse(frame.payload());
         if (!status.ok()) {
-            std::cerr << "Parse error for frame: " << status.error_message() << "\n";
+            log() << "Parse error for frame: " << status.error_message();
             return;
         }
 
@@ -235,8 +235,8 @@ public:
         if (connitr == connections_.end()) {
             connitr = connections_.find({ packet.dst(), "" });
             if (connitr == connections_.end()) {
-                std::cerr << "Unknown connection src=" << packet.src()
-                          << " dst=" << packet.dst() << "\n";
+                log() << "Unknown connection src=" << packet.src()
+                      << " dst=" << packet.dst();
                 return;
             }
         }
@@ -254,11 +254,10 @@ public:
             conn->apply([&packet](auto& con) { con.sabm(packet); });
         } else {
             // Not a seqpacket-related frame.
-            std::cerr << "Not a seqpacket-related frame:\n"
-                      << ax25ms::proto2string(packet) << "\n";
+            log() << "Not a seqpacket-related frame:\n" << ax25ms::proto2string(packet);
             return;
         }
-        std::cerr << "Got seqpacket frame of size " << frame.payload().size() << "\n";
+        log() << "Got seqpacket frame of size " << frame.payload().size();
 
         // TODO: conn->();
         //  find the connection this is for.
@@ -271,12 +270,12 @@ public:
     {
         try {
             auto ret = Connect2(ctx, stream);
-            std::clog << "Connect() returning\n";
+            log() << "Connect() returning";
             return ret;
         } catch (const std::exception& e) {
-            std::cerr << "Connect() exception: " << e.what() << "\n";
+            log() << "Connect() exception: " << e.what();
         } catch (...) {
-            std::cerr << "Connect() unknown exception\n";
+            log() << "Connect() unknown exception";
         }
         return grpc::Status(grpc::INTERNAL, "exception");
     }
@@ -288,9 +287,9 @@ public:
         try {
             return Accept2(ctx, stream);
         } catch (const std::exception& e) {
-            std::cerr << "Accept() exception: " << e.what() << "\n";
+            log() << "Accept() exception: " << e.what();
         } catch (...) {
-            std::cerr << "Accept() unknown exception\n";
+            log() << "Accept() unknown exception";
         }
         return grpc::Status(grpc::INTERNAL, "exception");
     }
@@ -299,7 +298,7 @@ public:
                          grpc::ServerReaderWriter<ax25ms::SeqAcceptResponse,
                                                   ax25ms::SeqAcceptRequest>* stream)
     {
-        std::clog << "Accepting a new connection()\n";
+        log() << "Accepting a new connection()";
         ax25ms::SeqAcceptRequest req;
         if (!stream->Read(&req)) {
             return grpc::Status(grpc::INVALID_ARGUMENT, "no initial data received");
@@ -327,13 +326,13 @@ public:
 
         // TODO: also await ctx cancellation.
         ce.await_state_not(seqpacket::con::StateNames::Disconnected);
-        std::clog << "Connection accepted!\n";
+        log() << "Connection accepted!";
 
         // Send connection metadata
         {
             ax25ms::SeqAcceptResponse metadata;
             if (!stream->Write(metadata)) {
-                std::cerr << "Failed to write to stream\n";
+                log() << "Failed to write to stream";
                 return grpc::Status(grpc::UNKNOWN,
                                     "failed to inform client that we were successful");
             }
@@ -345,13 +344,13 @@ public:
             for (;;) {
                 auto [payload, ok] = ce.await_data();
                 if (!ok) {
-                    std::clog << "Stopping accept reader\n";
+                    log() << "Stopping accept reader";
                     break;
                 }
                 ax25ms::SeqAcceptResponse data;
                 data.mutable_packet()->set_payload(payload);
                 if (!stream->Write(data)) {
-                    std::cerr << "Failed to write to stream\n";
+                    log() << "Failed to write to stream";
                     break;
                 }
             }
@@ -360,7 +359,7 @@ public:
         while (stream->Read(&req)) {
             ce.apply([&req](auto& con) { con.dl_data(req.packet().payload()); });
         }
-        std::clog << "Accept connection ended\n";
+        log() << "Accept connection ended";
         ce.apply([](auto& con) { con.dl_disconnect(); });
         receive_thread.join();
         {
@@ -380,7 +379,7 @@ public:
         grpc::ClientContext ctx;
         const auto status = router_->Send(&ctx, sreq, &resp);
         if (!status.ok()) {
-            std::cerr << "  Sending data failed\n";
+            log() << "  Sending data failed";
             throw std::runtime_error("Sending data failed: " + status.error_message());
         }
         return status;
@@ -390,12 +389,12 @@ public:
                           grpc::ServerReaderWriter<ax25ms::SeqConnectResponse,
                                                    ax25ms::SeqConnectRequest>* stream)
     {
-        std::cout << "Starting a new connection\n";
+        log() << "Starting a new connection";
         ax25ms::SeqConnectRequest req;
         if (!stream->Read(&req)) {
             return grpc::Status(grpc::INVALID_ARGUMENT, "no initial data received");
         }
-        std::cerr << proto2string(req) << "\n";
+        log() << "Received connection request: " << proto2string(req);
         if (!req.has_packet()) {
             return grpc::Status(grpc::INVALID_ARGUMENT, "initial burst had no packet");
         }
@@ -427,7 +426,7 @@ public:
         {
             ax25ms::SeqConnectResponse metadata;
             if (!stream->Write(metadata)) {
-                std::cerr << "Failed to write to stream\n";
+                log() << "Failed to write to stream";
                 return grpc::Status(grpc::UNKNOWN,
                                     "failed to inform client that we were successful");
             }
@@ -439,13 +438,13 @@ public:
             for (;;) {
                 const auto [payload, ok] = ce.await_data();
                 if (!ok) {
-                    std::clog << "Stopping reader\n";
+                    log() << "Stopping reader";
                     break;
                 }
                 ax25ms::SeqConnectResponse data;
                 data.mutable_packet()->set_payload(payload);
                 if (!stream->Write(data)) {
-                    std::cerr << "Failed to write to stream\n";
+                    log() << "Failed to write to stream";
                     break;
                 }
             }
@@ -454,7 +453,7 @@ public:
         while (stream->Read(&req)) {
             ce.apply([&req](auto& con) { con.dl_data(req.packet().payload()); });
         }
-        std::clog << "Connection ended\n";
+        log() << "Connection ended";
         ce.apply([](auto& con) { con.dl_disconnect(); });
         return grpc::Status::OK;
     }
@@ -480,6 +479,8 @@ namespace {
 
 int wrapmain(int argc, char** argv)
 {
+    using ax25ms::log;
+
     std::string router;
     std::string listen = "[::]:12346";
     {
@@ -500,11 +501,11 @@ int wrapmain(int argc, char** argv)
         }
     }
     if (router.empty()) {
-        std::cerr << "Need to specify router (-r)\n";
+        log() << "Need to specify router (-r)";
         return EXIT_FAILURE;
     }
     if (optind != argc) {
-        std::cerr << "Invalid extra args on the command line\n";
+        log() << "Invalid extra args on the command line";
         return EXIT_FAILURE;
     }
 
@@ -536,9 +537,9 @@ int wrapmain(int argc, char** argv)
         ax25ms::SendResponse resp;
         auto status = stub->Send(&ctx, req, &resp);
         if (!status.ok()) {
-            std::cerr << "Failed to send: " << status.error_message() << "\n";
+            log() << "Failed to send: " << status.error_message();
         } else {
-            std::cout << "Successfully sent a packet\n";
+            log() << "Successfully sent a packet";
         }
     }
 
@@ -549,7 +550,7 @@ int wrapmain(int argc, char** argv)
     builder.AddListeningPort(listen, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
-    std::cout << "Server started" << std::endl;
+    log() << "Server started";
 
     // Start stream from router.
     for (;;) {
@@ -562,9 +563,9 @@ int wrapmain(int argc, char** argv)
         }
         const auto status = reader->Finish();
         if (!status.ok()) {
-            std::cerr << "Stream ended with error\n";
+            log() << "Stream ended with error";
         }
-        std::cerr << "Stream ended. Looping\n";
+        log() << "Stream ended. Looping";
 
         std::this_thread::sleep_for(std::chrono::milliseconds{ 100 });
     }

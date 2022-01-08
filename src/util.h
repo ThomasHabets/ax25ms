@@ -13,12 +13,47 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#ifndef __AX25MS_H_INCLUDE__
+#define __AX25MS_H_INCLUDE__
+
 #include "proto/gen/ax25.pb.h"
+#include <chrono>
+#include <sstream>
 #include <string>
 
 #include <google/protobuf/text_format.h>
 
 namespace ax25ms {
+
+class LogLine
+{
+public:
+    LogLine();
+
+    // No copy.
+    LogLine(const LogLine&) = delete;
+    LogLine& operator=(const LogLine&) = delete;
+
+    // Move ok.
+    LogLine(LogLine&&);
+    LogLine& operator=(LogLine&&);
+
+    template <typename T>
+    LogLine& operator<<(const T& v)
+    {
+        s_ << v;
+        return *this;
+    }
+    ~LogLine();
+    void set_output(std::ostream* o) noexcept { out_ = o; };
+
+private:
+    time_t system_now_;
+    std::ostream* out_;
+    std::stringstream s_;
+};
+
+LogLine log();
 
 template <typename T>
 std::string proto2string(const T& proto)
@@ -30,5 +65,5 @@ std::string proto2string(const T& proto)
 
 std::string str2hex(std::string_view data);
 
-
 } // namespace ax25ms
+#endif

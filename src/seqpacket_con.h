@@ -17,6 +17,7 @@ limitations under the License.
  * Replacement state machine for seqpacket.
  */
 #include "proto/gen/ax25.pb.h"
+#include "util.h"
 
 #include <string_view>
 #include <deque>
@@ -38,13 +39,13 @@ public:
     int get() { return ms_; }
     void start()
     {
-        std::cerr << "Starting timer " << name_ << " with ms=" << ms_ << "\n";
+        ax25ms::log() << "Starting timer " << name_ << " with ms=" << ms_;
         running_ = true;
         deadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds{ ms_ };
     }
     void stop()
     {
-        std::cerr << "Stopping timer " << name_ << "\n";
+        ax25ms::log() << "Stopping timer " << name_;
         running_ = false;
     }
     void restart()
@@ -186,12 +187,12 @@ public:
     virtual stateptr_t iframe(const ax25::Packet& p);
     virtual stateptr_t timer1_tick()
     {
-        std::cerr << "ERROR: unhandled T1\n";
+        ax25ms::log() << "ERROR: unhandled T1";
         return nullptr;
     }
     virtual stateptr_t timer3_tick()
     {
-        std::cerr << "ERROR: unhandled T3\n";
+        ax25ms::log() << "ERROR: unhandled T3";
         return nullptr;
     }
 
