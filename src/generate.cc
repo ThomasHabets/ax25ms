@@ -26,10 +26,34 @@ limitations under the License.
 #include <unistd.h>
 
 namespace {
+const char* argv0 = nullptr;
+
 using subcommand_t = std::function<int(ax25::Packet&, int, char**)>;
+
 void usage(int err)
 {
-    std::cout << "Usage" << std::endl;
+    std::cout << "Usage: " << argv0 << " [ -r <rpt,rpt> ] <src> <command>…\n"
+              << "  Commands\n"
+              << "    aprs           Create APRS messages\n"
+              << "  Options:\n"
+              << "    -r <rpt,rpt>   Comma separated list of digipeaters\n";
+    exit(err);
+}
+
+void usage_aprs(int err)
+{
+    std::cout << "Usage: " << argv0 << " [ -r <rpt,rpt> ] <src> aprs <subcommand>…\n"
+              << "  Subcommands\n"
+              << "    msg   Create station message\n";
+    exit(err);
+}
+
+void usage_aprs_msg(int err)
+{
+    std::cout << "Usage: " << argv0
+              << " [ -r <rpt,rpt> ] <src> aprs msg [-n <num>] <dst> <msg>…\n"
+              << "  Options:\n"
+              << "    -n <num>   Message number\n";
     exit(err);
 }
 
@@ -37,17 +61,19 @@ int cmd_aprs_msg(ax25::Packet& packet, int argc, char** argv)
 {
     int opt;
     std::string num;
-    while ((opt = getopt(argc, argv, "+n:")) != -1) {
+    while ((opt = getopt(argc, argv, "+hn:")) != -1) {
         switch (opt) {
+        case 'h':
+            usage_aprs_msg(EXIT_SUCCESS);
         case 'n':
             num = optarg;
             break;
         default:
-            usage(EXIT_FAILURE);
+            usage_aprs_msg(EXIT_FAILURE);
         }
     }
     if (argc < optind + 2) {
-        usage(EXIT_FAILURE);
+        usage_aprs_msg(EXIT_FAILURE);
     }
     const std::string dst = argv[optind];
     const std::string text = argv[optind + 1];
@@ -64,16 +90,18 @@ int cmd_aprs(ax25::Packet& packet, int argc, char** argv)
 {
     int opt;
     optind = 0;
-    while ((opt = getopt(argc, argv, "+")) != -1) {
+    while ((opt = getopt(argc, argv, "+h")) != -1) {
         switch (opt) {
+        case 'h':
+            usage_aprs(EXIT_SUCCESS);
         default:
             std::cerr << "Bad option to aprs\n";
-            usage(EXIT_FAILURE);
+            usage_aprs(EXIT_FAILURE);
         }
     }
     if (argc == optind) {
         std::cerr << "Wrong number of args to aprs\n";
-        usage(EXIT_FAILURE);
+        usage_aprs(EXIT_FAILURE);
     }
     const std::string cmd = argv[optind];
     const std::map<std::string, subcommand_t> cbs{
@@ -82,9 +110,9 @@ int cmd_aprs(ax25::Packet& packet, int argc, char** argv)
     auto cb = cbs.find(cmd);
     if (cb == cbs.end()) {
         std::cerr << "Unknown aprs subcommand " << cmd << "\n";
-        usage(EXIT_FAILURE);
+        usage_aprs(EXIT_FAILURE);
     }
-    packet.set_dst("APK004"); // TODO: what dest should be used by default.
+    packet.set_dst("APZ001"); // TODO: Per APRS101.PDF page 14, this is "experimental".
     packet.set_command_response_la(true);
     auto& ui = *packet.mutable_ui();
     ui.set_pid(0xF0);
@@ -115,6 +143,7 @@ std::vector<std::string_view> split(std::string_view s)
 
 int wrapmain(int argc, char** argv)
 {
+    argv0 = argv[0];
     ax25::Packet packet;
     int opt;
     while ((opt = getopt(argc, argv, "+hr:")) != -1) {
@@ -150,7 +179,6 @@ int wrapmain(int argc, char** argv)
     }
     packet.set_src(src);
     int ret = cb->second(packet, argc - optind - 1, &argv[optind + 1]);
-    std::clog << ax25ms::proto2string(packet) << "\n";
     std::cout << ax25::serialize(packet, true);
     return ret;
 }
