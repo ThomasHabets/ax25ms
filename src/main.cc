@@ -22,7 +22,13 @@ int main(int argc, char** argv)
     try {
         return wrapmain(argc, argv);
     } catch (const std::exception& e) {
-        std::cerr << argv[0] << ": Exception" << e.what() << "\n";
+        std::cerr << argv[0] << ": Exception: " << e.what() << "\n";
         return 1;
+    } catch (const char* e) {
+        std::cerr << argv[0] << ": Exception (string): " << e << "\n";
+        return 1;
+    } catch (...) {
+        std::cerr << argv[0] << ": Exception (other)\n";
+        throw;
     }
 }
