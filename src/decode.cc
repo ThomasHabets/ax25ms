@@ -41,7 +41,10 @@ bool fcs = true; // -f to set false
 
 [[noreturn]] void usage(const char* av0, int err)
 {
-    std::cout << "Usage: " << av0 << ": [ -fh ] <input files...>\n";
+    std::cout << "Usage: " << av0 << ": [ -fh ] <input files...>\n"
+              << "  Options:\n"
+              << "    -f    Input does not include FCS.\n"
+              << "    -h    Show this help text.\n";
     exit(err);
 }
 
@@ -169,6 +172,7 @@ int wrapmain(int argc, char** argv)
         }
     }
 
+    bool fail = false;
     for (int i = optind; i < argc; i++) {
         const std::string fn = argv[i];
         const auto [payload, ok] = [fn]() -> std::pair<std::string, bool> {
@@ -182,12 +186,14 @@ int wrapmain(int argc, char** argv)
             return { buf.str(), true };
         }();
         if (!ok) {
+            fail = true;
             continue;
         }
         auto [packet, status1] = ax25::parse(payload, fcs);
         if (!status1.ok()) {
             std::cerr << "Failed to parse packet in " << fn << ": "
                       << status1.error_message() << "\n";
+            fail = true;
             continue;
         }
 
@@ -205,5 +211,5 @@ int wrapmain(int argc, char** argv)
         }
         std::cout << "// file: " << fn << "\n" << stringify(packet);
     }
-    return 0;
+    return fail ? EXIT_FAILURE : EXIT_SUCCESS;
 }
