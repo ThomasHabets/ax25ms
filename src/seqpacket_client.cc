@@ -74,10 +74,10 @@ int wrapmain(int argc, char** argv)
 
     std::clog << "Connecting…\n";
     grpc::ClientContext ctx;
-    ax25ms::SeqConnectRequest req;
+    ax25ms::SeqConnectAcceptRequest req;
     req.mutable_packet()->mutable_metadata()->mutable_source_address()->set_address(src);
     req.mutable_packet()->mutable_metadata()->mutable_address()->set_address(dst);
-    ax25ms::SeqConnectResponse resp;
+    ax25ms::SeqConnectAcceptResponse resp;
     auto stream = seq->Connect(&ctx);
     if (!stream->Write(req)) {
         std::clog << "Failed to start connect RPC: " << stream->Finish().error_message()
@@ -96,7 +96,7 @@ int wrapmain(int argc, char** argv)
             }
 
             grpc::ClientContext ctx;
-            ax25ms::SeqConnectRequest req;
+            ax25ms::SeqConnectAcceptRequest req;
             req.mutable_packet()->set_payload(cmd);
             if (!stream->Write(req)) {
                 std::cerr << "Failed to write command\n";

@@ -53,6 +53,8 @@ using read_func_t = ssize_t (*)(int, void*, size_t);
 using write_func_t = ssize_t (*)(int, const void*, size_t);
 using bind_func_t = int (*)(int, const struct sockaddr*, socklen_t);
 using connect_func_t = int (*)(int, const struct sockaddr*, socklen_t);
+using listen_func_t = int (*)(int, int);
+using accept_func_t = int (*)(int, struct sockaddr*, socklen_t*);
 using getsockopt_func_t = int (*)(int, int, int, void*, socklen_t*);
 using setsockopt_func_t = int (*)(int, int, int, const void*, socklen_t);
 using close_func_t = int (*)(int);
@@ -63,6 +65,8 @@ read_func_t orig_read = nullptr;
 write_func_t orig_write = nullptr;
 bind_func_t orig_bind = nullptr;
 connect_func_t orig_connect = nullptr;
+listen_func_t orig_listen = nullptr;
+accept_func_t orig_accept = nullptr;
 getsockopt_func_t orig_getsockopt = nullptr;
 setsockopt_func_t orig_setsockopt = nullptr;
 close_func_t orig_close = nullptr;
@@ -153,6 +157,10 @@ private:
 class Connection
 {
 public:
+    using stream_t =
+        std::unique_ptr<grpc::ClientReaderWriter<ax25ms::SeqConnectAcceptRequest,
+                                                 ax25ms::SeqConnectAcceptResponse>>;
+
     Connection(int type, int protocol);
     ~Connection();
 
@@ -169,13 +177,27 @@ public:
     int setsockopt(int level, int optname, const void* optval, socklen_t optlen);
     int bind(const struct sockaddr* addr, socklen_t addrlen);
     int connect(const struct sockaddr* addr, socklen_t addrlen);
+    int accept(struct sockaddr*, socklen_t* addrlen) const;
+    int listen(int backlog);
+
+    void set_stream(stream_t&& stream) { stream_ = std::move(stream); }
+    stream_t& stream() { return stream_; }
+    grpc::ClientContext& stream_ctx() { return stream_ctx_; }
 
 private:
     void read_thread_main();
 
     std::mutex read_queue_mu_;
     std::condition_variable read_queue_cv_;
-    std::deque<ax25ms::SeqConnectResponse> read_queue_;
+
+    void set_read_ready()
+    {
+        std::unique_lock<std::mutex> lk(read_queue_mu_);
+        read_ready_ = true;
+        read_queue_cv_.notify_one();
+    }
+
+    std::deque<ax25ms::SeqConnectAcceptResponse> read_queue_;
     bool read_ready_ = false;
     bool read_stop_ = false; // There is no stream_ctx_.IsCancelled()
                              // (?), so need this bool.
@@ -187,9 +209,7 @@ private:
     int paclen_ = 200; // TODO
     grpc::ClientContext stream_ctx_;
 
-    std::unique_ptr<
-        grpc::ClientReaderWriter<ax25ms::SeqConnectRequest, ax25ms::SeqConnectResponse>>
-        stream_;
+    stream_t stream_;
 
     std::string src_;
 
@@ -334,13 +354,15 @@ void Connection::read_thread_main()
         std::unique_lock<std::mutex> lk(read_queue_mu_);
         read_queue_cv_.wait(lk, [this] { return read_ready_; });
     }
+    log() << "Read ready!";
 
     // Connection failed.
     if (!stream_) {
+        log() << "Connection failed!";
         return;
     }
 
-    ax25ms::SeqConnectResponse resp;
+    ax25ms::SeqConnectAcceptResponse resp;
 
     while (stream_->Read(&resp)) {
         {
@@ -365,7 +387,7 @@ void Connection::read_thread_main()
 ssize_t Connection::read(void* buf, size_t count)
 {
     for (;;) {
-        ax25ms::SeqConnectResponse resp;
+        ax25ms::SeqConnectAcceptResponse resp;
         {
             std::unique_lock<std::mutex> lk(read_queue_mu_);
             read_queue_cv_.wait(lk, [this] { return !read_queue_.empty(); });
@@ -396,7 +418,7 @@ ssize_t Connection::read(void* buf, size_t count)
 
 ssize_t Connection::write(const void* buf, size_t count)
 {
-    ax25ms::SeqConnectRequest req;
+    ax25ms::SeqConnectAcceptRequest req;
     req.mutable_packet()->set_payload(buf, count);
     if (!stream_->Write(req)) {
         // TODO: log more info.
@@ -510,6 +532,62 @@ int Connection::bind(const struct sockaddr* addr, socklen_t addrlen)
     return 0;
 }
 
+int Connection::listen(int backlog)
+{
+    // TODO: implement.
+    return 0;
+}
+
+int Connection::accept(struct sockaddr* addr, socklen_t* addrlen) const
+{
+    using sa_t = struct full_sockaddr_ax25;
+    if (*addrlen < sizeof(sa_t)) {
+        log() << "Addrlen too small";
+        errno = EINVAL;
+        return -1;
+    }
+    auto sa = reinterpret_cast<sa_t*>(addr);
+    memset(sa, 0, sizeof(sa_t));
+
+    // Need to create the connection first because context is not movable. :-(
+    auto newcon = std::make_unique<Connection>(type_, protocol_);
+
+    // Send RPC.
+    grpc::ClientContext& ctx = newcon->stream_ctx();
+    auto stream = router()->Accept(&ctx);
+
+    ax25ms::SeqConnectAcceptRequest req;
+    log() << "Listening to <" << src_ << ">";
+    req.mutable_packet()->mutable_metadata()->mutable_source_address()->set_address(src_);
+
+    if (!stream->Write(req)) {
+        log() << "Failed to start Accept RPC: " << stream_->Finish().error_message();
+        errno = ECONNREFUSED;
+        return -1;
+    }
+
+    // Wait for the connection metadata.
+    ax25ms::SeqConnectAcceptResponse resp;
+    bool ok = stream->Read(&resp);
+    newcon->set_read_ready();
+    if (!ok) {
+        log() << "accept() RPC failed: " << stream->Finish().error_message();
+        errno = ECONNREFUSED;
+        return -1;
+    }
+
+    addr->sa_family = AF_AX25;
+    const auto fd = newcon->fd();
+    newcon->set_stream(std::move(stream));
+    if (!connections.insert(std::move(newcon))) {
+        log() << "Failed to insert new accepted connection into connection map";
+        errno = EBADFD;
+        return -1;
+    }
+    log() << "Successfully accepted connection";
+    return fd;
+}
+
 int Connection::connect(const struct sockaddr* addr, socklen_t addrlen)
 {
     if (addr->sa_family != AF_AX25) {
@@ -520,7 +598,7 @@ int Connection::connect(const struct sockaddr* addr, socklen_t addrlen)
     const std::string dst = ax25_ntoa(&sa->fsa_ax25.sax25_call);
 
     // Send RPC.
-    ax25ms::SeqConnectRequest req;
+    ax25ms::SeqConnectAcceptRequest req;
     req.mutable_packet()->mutable_metadata()->mutable_source_address()->set_address(src_);
     req.mutable_packet()->mutable_metadata()->mutable_address()->set_address(dst);
     req.mutable_packet()->mutable_metadata()->mutable_connection_settings()->set_extended(
@@ -533,11 +611,9 @@ int Connection::connect(const struct sockaddr* addr, socklen_t addrlen)
     }
 
     // Wait for the connection metadata.
-    ax25ms::SeqConnectResponse resp;
+    ax25ms::SeqConnectAcceptResponse resp;
     bool ok = stream_->Read(&resp);
-    std::unique_lock<std::mutex> lk(read_queue_mu_);
-    read_ready_ = true;
-    read_queue_cv_.notify_one();
+    set_read_ready();
     if (!ok) {
         stream_ = nullptr;
         errno = ECONNREFUSED;
@@ -672,6 +748,30 @@ int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
     }
     log() << "connect(AF_AX25)";
     return con->connect(addr, addrlen);
+}
+
+int listen(int fd, int backlog)
+{
+    init();
+    auto con = connections.get(fd);
+    if (!con) {
+        assert(orig_listen);
+        return orig_listen(fd, backlog);
+    }
+    log() << "listen(AF_AX25)";
+    return con->listen(backlog);
+}
+
+int accept(int fd, struct sockaddr* addr, socklen_t* addrlen)
+{
+    init();
+    auto con = connections.get(fd);
+    if (!con) {
+        assert(orig_accept);
+        return orig_accept(fd, addr, addrlen);
+    }
+    log() << "accept(AF_AX25)";
+    return con->accept(addr, addrlen);
 }
 
 ssize_t read(int fd, void* buf, size_t count)

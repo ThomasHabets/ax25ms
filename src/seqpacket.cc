@@ -271,8 +271,8 @@ public:
 
     grpc::Status
     Connect(grpc::ServerContext* ctx,
-            grpc::ServerReaderWriter<ax25ms::SeqConnectResponse,
-                                     ax25ms::SeqConnectRequest>* stream) override
+            grpc::ServerReaderWriter<ax25ms::SeqConnectAcceptResponse,
+                                     ax25ms::SeqConnectAcceptRequest>* stream) override
     {
         try {
             auto ret = Connect2(ctx, stream);
@@ -287,8 +287,8 @@ public:
     }
     grpc::Status
     Accept(grpc::ServerContext* ctx,
-           grpc::ServerReaderWriter<ax25ms::SeqAcceptResponse, ax25ms::SeqAcceptRequest>*
-               stream) override
+           grpc::ServerReaderWriter<ax25ms::SeqConnectAcceptResponse,
+                                    ax25ms::SeqConnectAcceptRequest>* stream) override
     {
         try {
             return Accept2(ctx, stream);
@@ -300,12 +300,13 @@ public:
         return grpc::Status(grpc::INTERNAL, "exception");
     }
 
-    grpc::Status Accept2(grpc::ServerContext* ctx,
-                         grpc::ServerReaderWriter<ax25ms::SeqAcceptResponse,
-                                                  ax25ms::SeqAcceptRequest>* stream)
+    grpc::Status
+    Accept2(grpc::ServerContext* ctx,
+            grpc::ServerReaderWriter<ax25ms::SeqConnectAcceptResponse,
+                                     ax25ms::SeqConnectAcceptRequest>* stream)
     {
         log() << "Accepting a new connection()";
-        ax25ms::SeqAcceptRequest req;
+        ax25ms::SeqConnectAcceptRequest req;
         if (!stream->Read(&req)) {
             return grpc::Status(grpc::INVALID_ARGUMENT, "no initial data received");
         }
@@ -336,7 +337,7 @@ public:
 
         // Send connection metadata
         {
-            ax25ms::SeqAcceptResponse metadata;
+            ax25ms::SeqConnectAcceptResponse metadata;
             if (!stream->Write(metadata)) {
                 log() << "Failed to write to stream";
                 return grpc::Status(grpc::UNKNOWN,
@@ -353,7 +354,7 @@ public:
                     log() << "Stopping accept reader";
                     break;
                 }
-                ax25ms::SeqAcceptResponse data;
+                ax25ms::SeqConnectAcceptResponse data;
                 data.mutable_packet()->set_payload(payload);
                 if (!stream->Write(data)) {
                     log() << "Failed to write to stream";
@@ -391,12 +392,13 @@ public:
         return status;
     }
 
-    grpc::Status Connect2(grpc::ServerContext* ctx,
-                          grpc::ServerReaderWriter<ax25ms::SeqConnectResponse,
-                                                   ax25ms::SeqConnectRequest>* stream)
+    grpc::Status
+    Connect2(grpc::ServerContext* ctx,
+             grpc::ServerReaderWriter<ax25ms::SeqConnectAcceptResponse,
+                                      ax25ms::SeqConnectAcceptRequest>* stream)
     {
         log() << "Starting a new connection";
-        ax25ms::SeqConnectRequest req;
+        ax25ms::SeqConnectAcceptRequest req;
         if (!stream->Read(&req)) {
             return grpc::Status(grpc::INVALID_ARGUMENT, "no initial data received");
         }
@@ -430,7 +432,7 @@ public:
 
         // Send connection metadata
         {
-            ax25ms::SeqConnectResponse metadata;
+            ax25ms::SeqConnectAcceptResponse metadata;
             if (!stream->Write(metadata)) {
                 log() << "Failed to write to stream";
                 return grpc::Status(grpc::UNKNOWN,
@@ -447,7 +449,7 @@ public:
                     log() << "Stopping reader";
                     break;
                 }
-                ax25ms::SeqConnectResponse data;
+                ax25ms::SeqConnectAcceptResponse data;
                 data.mutable_packet()->set_payload(payload);
                 if (!stream->Write(data)) {
                     log() << "Failed to write to stream";

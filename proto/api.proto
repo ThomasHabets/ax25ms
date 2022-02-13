@@ -47,20 +47,12 @@ message SeqMetadata {
   Address source_address = 4;
 }
 
-message SeqConnectRequest {
+message SeqConnectAcceptRequest {
   SeqPacket packet = 1;
   int64 timeout_ms = 2;
 }
 
-message SeqConnectResponse {
-  SeqPacket packet = 1;
-}
-
-message SeqAcceptRequest {
-  SeqPacket packet = 1;
-}
-
-message SeqAcceptResponse {
+message SeqConnectAcceptResponse {
   SeqPacket packet = 1;
 }
 
@@ -76,6 +68,6 @@ service RouterService {
 }
 
 service SeqPacketService {
-  rpc Accept(stream SeqAcceptRequest) returns (stream SeqAcceptResponse) {}
-  rpc Connect(stream SeqConnectRequest) returns (stream SeqConnectResponse) {}
+  rpc Accept(stream SeqConnectAcceptRequest) returns (stream SeqConnectAcceptResponse) {}
+  rpc Connect(stream SeqConnectAcceptRequest) returns (stream SeqConnectAcceptResponse) {}
 }

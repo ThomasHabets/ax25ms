@@ -73,9 +73,9 @@ int wrapmain(int argc, char** argv)
 
     std::clog << "Accepting…\n";
     grpc::ClientContext ctx;
-    ax25ms::SeqAcceptRequest req;
+    ax25ms::SeqConnectAcceptRequest req;
     req.mutable_packet()->mutable_metadata()->mutable_source_address()->set_address(src);
-    ax25ms::SeqAcceptResponse resp;
+    ax25ms::SeqConnectAcceptResponse resp;
     auto stream = seq->Accept(&ctx);
     if (!stream->Write(req)) {
         std::clog << "Failed to start Accept RPC: " << stream->Finish().error_message()
@@ -94,7 +94,7 @@ int wrapmain(int argc, char** argv)
             }
 
             grpc::ClientContext ctx;
-            ax25ms::SeqAcceptRequest req;
+            ax25ms::SeqConnectAcceptRequest req;
             req.mutable_packet()->set_payload(cmd);
             if (!stream->Write(req)) {
                 std::cerr << "Failed to write command\n";
