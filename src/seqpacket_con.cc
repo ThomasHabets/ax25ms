@@ -1,5 +1,5 @@
 /*
-   Copyright 2021 Google LLC
+   Copyright 2021-2022 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ limitations under the License.
  * * SREJ
  * * REJ is untested.
  * * A fix for the RR DoS
- * * Trigger poll on last iframe of a window
  */
 #include "seqpacket_con.h"
 #include "util.h"
@@ -1056,6 +1055,12 @@ void ConnectionState::iframe_pop()
         auto& iframe = *packet.mutable_iframe();
         iframe.set_ns(ns);
         iframe.set_nr(nr);
+
+        // OUT OF SPEC:
+        // If this is the last packet in the window then set the poll bit.
+        if (d.vs == (d.va + d.k + d.modulus - 1) % d.modulus) {
+            iframe.set_poll(true);
+        }
 
         connection_->send_packet(packet);
 

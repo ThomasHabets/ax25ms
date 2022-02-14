@@ -145,7 +145,7 @@ public:
     {
         for (;;) {
             std::unique_lock<std::mutex> lk(mu_);
-            log() << id_ << " await_data() (post lock)";
+            // log() << id_ << " await_data() (post lock)";
             wait(lk, [this] {
                 if (!con_.state().can_receive_data()) {
                     return false;
@@ -185,12 +185,12 @@ private:
     {
         bool done = false;
         while (!done) {
-            log() << id_ << " wait() outer";
+            // log() << id_ << " wait() outer";
             const auto [until, timer_running] = next_timer();
 
             if (!timer_running) {
                 cv_.wait(lk, [this, &done, &pred, &until, &timer_running] {
-                    log() << id_ << " inner loop waiting with no timer running";
+                    // log() << id_ << " inner loop waiting with no timer running";
                     if (pred()) {
                         done = true;
                         return true;
@@ -208,7 +208,7 @@ private:
             }
             const bool notimeout =
                 cv_.wait_until(lk, until, [this, &done, &pred, &until, &timer_running] {
-                    log() << id_ << " inner loop waiting with timer running";
+                    // log() << id_ << " inner loop waiting with timer running";
                     if (pred()) {
                         done = true;
                         return true;
