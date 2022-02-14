@@ -14,7 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 /*
- * Replacement state machine for seqpacket.
+ * State machine for seqpacket.
+ *
+ * Unimplemented (known so far):
+ * * SREJ
+ * * REJ is untested.
+ * * A fix for the RR DoS
+ * * Trigger poll on last iframe of a window
  */
 #include "seqpacket_con.h"
 #include "util.h"
@@ -195,7 +201,6 @@ void ConnectionState::invoke_retransmission(int nr)
         assert(itr != d.iframe_resend_queue.rend());
         d.iframe_queue_.push_front(*itr++);
     }
-    iframe_pop();
 }
 
 void ConnectionState::update_ack(int nr)
@@ -366,6 +371,7 @@ public:
     stateptr_t timer1_tick() override;
 
     stateptr_t dl_data(std::string_view sv) override;
+    stateptr_t dl_data_poll() override;
     stateptr_t dl_connect(std::string_view dst, std::string_view src) override;
     stateptr_t dl_disconnect() override;
     bool can_receive_data() const override { return true; }
@@ -378,6 +384,7 @@ public:
     std::string name() const override { return StateNames::TimerRecovery; }
 
     stateptr_t dl_data(std::string_view sv) override;
+    stateptr_t dl_data_poll() override;
     stateptr_t iframe(const ax25::Packet& p) override;
     stateptr_t rr(const ax25::Packet& p) override;
     stateptr_t disc(const ax25::Packet& p) override;
@@ -410,16 +417,6 @@ ConnectionState::stateptr_t TimerRecovery::rr(const ax25::Packet& p)
             return nullptr;
         }
         d.t3.start();
-
-        // There could have been enqueues that were not able to be
-        // sent. Trigger them here.
-        //
-        // TODO: this should actually be triggered by a new callback.
-        // Otherwise we have to wait for the T1 timer to keep expiring.
-        // Straightforward, but needs a bunch of code, so TODO.
-        if (iframe_pop()) {
-            return nullptr;
-        }
         return std::make_unique<Connected>(connection_);
     }
 
@@ -754,11 +751,15 @@ ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
         // decrement sreject exception if >0
         log() << d.connection_id << " DL-DATA INDICATION";
         connection_->deliver(p);
+
+        // TODO: Check for any out of order iframes unlocking
+        // previously received packets.
         while (/*i frame stored*/ false) {
             //   retrieve stored V(r) i frame
             //   DL-DATA indication
             d.vr = (d.vr + 1) % d.modulus;
         }
+
         if (poll) {
             send_rr(true, d.vr, false);
             d.acknowledge_pending = false;
@@ -867,6 +868,19 @@ ConnectionState::stateptr_t Connected::dl_data(std::string_view sv)
     p.set_command_response(true);
     d.iframe_resend_queue.push_back(p);
     d.iframe_queue_.push_back(std::move(p));
+    return nullptr;
+}
+
+// Page 92.
+ConnectionState::stateptr_t Connected::dl_data_poll()
+{
+    iframe_pop();
+    return nullptr;
+}
+
+// Page 98.
+ConnectionState::stateptr_t TimerRecovery::dl_data_poll()
+{
     iframe_pop();
     return nullptr;
 }
@@ -882,7 +896,6 @@ ConnectionState::stateptr_t TimerRecovery::dl_data(std::string_view sv)
     p.set_command_response(true);
     d.iframe_resend_queue.push_back(p);
     d.iframe_queue_.push_back(std::move(p));
-    iframe_pop();
     return nullptr;
 }
 
@@ -1014,19 +1027,25 @@ ConnectionState::ConnectionState(Connection* connection)
 {
 }
 
-bool ConnectionState::iframe_pop()
+// Page 92 & 98.
+void ConnectionState::iframe_pop()
 {
-    bool sent = false;
     while (!d.iframe_queue_.empty()) {
+        // log() << d.connection_id << " flush?";
+        // Receiver busy.
         if (d.peer_receiver_busy) {
-            // push frame on queue
-            return sent;
+            // "Push i frame on queue", here meaning leave it on the
+            // queue.
+            // log() << d.connection_id << " no, receiver busy";
+            return;
         }
 
         // Check window full.
         if (d.vs == (d.va + d.k) % d.modulus) {
-            // push i frame on queue
-            return sent;
+            // Same.
+            // log() << d.connection_id << " no, window is closed vs va k " << d.vs
+            // << d.va << d.k;
+            return;
         }
 
         const auto ns = d.vs;
@@ -1039,7 +1058,6 @@ bool ConnectionState::iframe_pop()
         iframe.set_nr(nr);
 
         connection_->send_packet(packet);
-        sent = true;
 
         d.vs = (d.vs + 1) % d.modulus;
 
@@ -1049,7 +1067,6 @@ bool ConnectionState::iframe_pop()
             d.t3.stop();
         }
     }
-    return sent;
 }
 
 ConnectionState::stateptr_t
@@ -1082,8 +1099,17 @@ void Connection::send_packet(const ax25::Packet& packet)
     send_(p);
 }
 
-void Connection::state_change(std::unique_ptr<ConnectionState>&& st)
+void Connection::maybe_change_state(std::unique_ptr<ConnectionState>&& st)
 {
+    if (st) {
+        state_ = std::move(st);
+        if (state_change_) {
+            state_change_(state_.get());
+        }
+    }
+
+    // Now do a data poll, possibly changing state again.
+    st = state_->dl_data_poll();
     if (st) {
         state_ = std::move(st);
         if (state_change_) {

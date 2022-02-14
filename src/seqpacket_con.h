@@ -211,6 +211,10 @@ public:
     // Transmit data using connection oriented protocol.
     virtual stateptr_t dl_data(std::string_view sv) { return nullptr; }
 
+    // Poll the transmit queue and transmit if appropriate.
+    // Call after any other op, in case they cleared to send.
+    virtual stateptr_t dl_data_poll() { return nullptr; }
+
     // Transmit data using connectionless protocol.
     // virtual stateptr_t dl_unit_data() { return nullptr; };
 
@@ -219,8 +223,8 @@ public:
 
     stateptr_t connected_timer_recovery_disc(const ax25::Packet& p);
 
-    // Return true if any packets were sent.
-    bool iframe_pop();
+    // Send as much as possible on the transmit queue.
+    void iframe_pop();
 
     virtual bool can_receive_data() const = 0;
 
@@ -277,11 +281,11 @@ public:
     using state_change_t = std::function<void(ConnectionState*)>;
 
     Connection(int connection_id, send_func_t send, receive_func_t receive);
-#define P(xx)                        \
-    template <typename T>            \
-    void xx(const T& p)              \
-    {                                \
-        state_change(state_->xx(p)); \
+#define P(xx)                              \
+    template <typename T>                  \
+    void xx(const T& p)                    \
+    {                                      \
+        maybe_change_state(state_->xx(p)); \
     }
     P(sabm)
     P(sabme)
@@ -292,16 +296,17 @@ public:
     P(dm)
     P(disc)
     P(dl_data)
+    P(dl_data_poll)
 #define P0(xx) \
-    void xx() { state_change(state_->xx()); }
+    void xx() { maybe_change_state(state_->xx()); }
     P0(timer1_tick)
     P0(timer3_tick)
     P0(dl_disconnect)
-#define P2(xx)                          \
-    template <typename T0, typename T1> \
-    void xx(const T0& a, const T1& b)   \
-    {                                   \
-        state_change(state_->xx(a, b)); \
+#define P2(xx)                                \
+    template <typename T0, typename T1>       \
+    void xx(const T0& a, const T1& b)         \
+    {                                         \
+        maybe_change_state(state_->xx(a, b)); \
     }
     P2(dl_connect)
 
@@ -318,7 +323,7 @@ public:
     void set_state_change_cb(state_change_t cb) { state_change_ = cb; }
 
 protected:
-    void state_change(std::unique_ptr<ConnectionState>&& st);
+    void maybe_change_state(std::unique_ptr<ConnectionState>&& st);
 
     const int connection_id_;
 
