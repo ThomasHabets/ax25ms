@@ -38,11 +38,11 @@ limitations under the License.
 
 namespace {
 
-constexpr bool fcs = true;
+bool fcs = true; // -f to set false
 
 [[noreturn]] void usage(const char* av0, int err)
 {
-    std::cout << av0 << ": Usage [ -h ] -r <router host:port>\n";
+    std::cout << av0 << ": Usage [ -fh ] -r <router host:port>\n";
     exit(err);
 }
 
@@ -92,10 +92,13 @@ int wrapmain(int argc, char** argv)
     std::string router;
     {
         int opt;
-        while ((opt = getopt(argc, argv, "hr:")) != -1) {
+        while ((opt = getopt(argc, argv, "fhr:")) != -1) {
             switch (opt) {
             case 'r':
                 router = optarg;
+                break;
+            case 'f':
+                fcs = false;
                 break;
             case 'h':
                 usage(argv[0], EXIT_SUCCESS);
