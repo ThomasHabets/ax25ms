@@ -407,6 +407,16 @@ ConnectionState::stateptr_t TimerRecovery::rr(const ax25::Packet& p)
             return nullptr;
         }
         d.t3.start();
+
+        // There could have been enqueues that were not able to be
+        // sent. Trigger them here.
+        //
+        // TODO: this should actually be triggered by a new callback.
+        // Otherwise we have to wait for the T1 timer to keep expiring.
+        // Straightforward, but needs a bunch of code, so TODO.
+        if (iframe_pop()) {
+            return nullptr;
+        }
         return std::make_unique<Connected>(connection_);
     }
 
