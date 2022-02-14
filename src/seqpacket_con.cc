@@ -775,7 +775,6 @@ ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
         return nullptr;
     }
 
-
     return nullptr;
 }
 
@@ -872,6 +871,8 @@ ConnectionState::stateptr_t TimerRecovery::dl_data(std::string_view sv)
     auto& iframe = *p.mutable_iframe();
     iframe.set_pid(0xf0);
     iframe.set_payload(sv.data(), sv.size());
+    p.set_command_response(true);
+    d.iframe_resend_queue.push_back(p);
     d.iframe_queue_.push_back(std::move(p));
     iframe_pop();
     return nullptr;
@@ -998,18 +999,19 @@ ConnectionState::ConnectionState(Connection* connection)
 {
 }
 
-void ConnectionState::iframe_pop()
+bool ConnectionState::iframe_pop()
 {
+    bool sent = false;
     while (!d.iframe_queue_.empty()) {
         if (d.peer_receiver_busy) {
             // push frame on queue
-            return;
+            return sent;
         }
 
         // Check window full.
         if (d.vs == (d.va + d.k) % d.modulus) {
             // push i frame on queue
-            return;
+            return sent;
         }
 
         const auto ns = d.vs;
@@ -1022,6 +1024,7 @@ void ConnectionState::iframe_pop()
         iframe.set_nr(nr);
 
         connection_->send_packet(packet);
+        sent = true;
 
         d.vs = (d.vs + 1) % d.modulus;
 
@@ -1030,6 +1033,7 @@ void ConnectionState::iframe_pop()
             d.t3.stop();
         }
     }
+    return sent;
 }
 
 ConnectionState::stateptr_t

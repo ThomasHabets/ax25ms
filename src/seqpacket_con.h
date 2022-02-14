@@ -212,7 +212,10 @@ public:
     virtual stateptr_t dl_disconnect() { return nullptr; }
 
     stateptr_t connected_timer_recovery_disc(const ax25::Packet& p);
-    void iframe_pop();
+
+    // Return true if any packets were sent.
+    bool iframe_pop();
+
     virtual bool can_receive_data() const = 0;
 
     void update_ack(int nr);
