@@ -133,49 +133,98 @@ public:
     }
 
     template <typename T>
-    auto apply(T func)
+    void apply(T func)
     {
-        return func(con_);
+        // TODO: assert func() returns void.
+        func(con_);
+        cv_.notify_all();
     }
 
     // Return false for second arg if connection has died.
     std::pair<std::string, bool> await_data()
     {
-        std::unique_lock<std::mutex> lk(mu_);
-        wait(lk, [this] {
-            if (!con_.state().can_receive_data()) {
-                return true;
+        for (;;) {
+            std::unique_lock<std::mutex> lk(mu_);
+            log() << id_ << " await_data() (post lock)";
+            wait(lk, [this] {
+                if (!con_.state().can_receive_data()) {
+                    return false;
+                }
+                if (!received_.empty()) {
+                    return true;
+                }
+                return false;
+            });
+
+            if (received_.empty()) {
+                continue;
             }
-            if (!received_.empty()) {
-                return true;
-            }
-            return false;
-        });
-        if (!received_.empty()) {
+
+            // We have data. Deliver it.
+            assert(con_.state().can_receive_data());
             auto ret = received_.front();
             received_.pop_front();
             return { ret, true };
         }
-        assert(!con_.state().can_receive_data());
-        return { "", false };
     }
 
 private:
     void deliver(std::string_view sv);
 
+    // Waits until pred is true, while triggering timers when needed.
+    //
+    // Very very ugly code because the timer can change *while we are
+    // waiting*.
+    //
+    // Any timer change will cause cv wakeup, but not necessarily pred()
+    // success.
+    //
+    // TODO: surely there's a cleaner way to do this.
     template <typename Pred>
     void wait(std::unique_lock<std::mutex>& lk, Pred pred)
     {
-        const auto [until, timer_running] = next_timer();
-        if (!timer_running) {
-            cv_.wait(lk, pred);
-            return;
-        }
-        for (;;) {
-            const bool notimeout = cv_.wait_until(lk, until, pred);
+        bool done = false;
+        while (!done) {
+            log() << id_ << " wait() outer";
+            const auto [until, timer_running] = next_timer();
+
+            if (!timer_running) {
+                cv_.wait(lk, [this, &done, &pred, &until, &timer_running] {
+                    log() << id_ << " inner loop waiting with no timer running";
+                    if (pred()) {
+                        done = true;
+                        return true;
+                    }
+                    const auto [n2, t2] = next_timer();
+                    if (until != n2) {
+                        return true;
+                    }
+                    if (timer_running != t2) {
+                        return true;
+                    }
+                    return false;
+                });
+                continue;
+            }
+            const bool notimeout =
+                cv_.wait_until(lk, until, [this, &done, &pred, &until, &timer_running] {
+                    log() << id_ << " inner loop waiting with timer running";
+                    if (pred()) {
+                        done = true;
+                        return true;
+                    }
+                    const auto [n2, t2] = next_timer();
+                    if (until != n2) {
+                        return true;
+                    }
+                    if (timer_running != t2) {
+                        return true;
+                    }
+                    return false;
+                });
             trigger_timers();
             if (notimeout) {
-                break;
+                return;
             }
         }
     }
