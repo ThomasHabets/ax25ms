@@ -43,7 +43,7 @@ bool in_range(int va, int nr, int vs, int mod)
 } // namespace
 
 namespace seqpacket::con {
-void ConnectionState::dl_error(const DLError& e)
+void ConnectionState::dl_error(const DLError& e) const
 {
     // Page 81.
     std::map<DLError, std::string> sm = {

@@ -252,7 +252,7 @@ protected:
     Connection* connection_;
 
     // error reporting
-    void dl_error(const DLError& e);
+    void dl_error(const DLError& e) const;
 };
 
 namespace StateNames {
