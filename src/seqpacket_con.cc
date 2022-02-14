@@ -77,7 +77,7 @@ void ConnectionState::dl_error(const DLError& e) const
     } else {
         s = itr->second;
     }
-    log() << "DL ERROR: " << int(e) << " (" << s << ")";
+    log() << d.connection_id << " DL ERROR: " << int(e) << " (" << s << ")";
 }
 
 ConnectionState::stateptr_t ConnectionState::iframe(const ax25::Packet& p)
@@ -187,7 +187,7 @@ void ConnectionState::invoke_retransmission(int nr)
     std::deque<ax25::Packet> resend;
 
     d.vs = nr;
-    log() << "Retransmitting from " << nr << " to " << x << " with "
+    log() << d.connection_id << " Retransmitting from " << nr << " to " << x << " with "
           << d.iframe_resend_queue.size();
     auto itr = d.iframe_resend_queue.rbegin();
     for (int i = nr; i != x; i = (i + 1) % d.modulus) {
@@ -200,6 +200,7 @@ void ConnectionState::invoke_retransmission(int nr)
 
 void ConnectionState::update_ack(int nr)
 {
+    // log() << d.connection_id << " YYY acking to " << nr;
     while (d.va != nr) {
         assert(!d.iframe_resend_queue.empty());
         d.iframe_resend_queue.pop_front();
@@ -228,7 +229,7 @@ void ConnectionState::check_iframe_acked(int nr)
     }
 
     // No, not all frames ack'd.
-    log() << "XXXXXXX Not all frames acked";
+    log() << d.connection_id << " XXXXXXX Not all frames acked";
     if (nr != d.va) {
         update_ack(nr);
         d.t1.restart();
@@ -254,7 +255,7 @@ void ConnectionState::ui_check(bool command)
     }
 
     if (/* info field length <= N1 and content is octet aligned */ true) {
-        log() << "DL-UNIT-DATA indication";
+        log() << d.connection_id << " DL-UNIT-DATA indication";
     } else {
         dl_error(DLError::K);
     }
@@ -397,11 +398,13 @@ ConnectionState::stateptr_t TimerRecovery::rr(const ax25::Packet& p)
     if (!command && pf) {
         d.t1.stop();
         select_t1_value();
+        // log() << d.connection_id << " XXX Va nr Vs " << d.va << nr << d.vs;
         if (!in_range(d.va, nr, d.vs, d.modulus)) {
             nr_error_recovery();
             return std::make_unique<AwaitingConnection>(connection_);
         }
         update_ack(nr);
+        // log() << d.connection_id << " XXX Vs Va " << d.vs << d.va;
         if (d.vs != d.va) {
             invoke_retransmission(nr);
             return nullptr;
@@ -480,7 +483,7 @@ ConnectionState::stateptr_t Disconnected::sabm(const ax25::Packet& p)
     d.vs = 0;
     d.va = 0;
     d.vr = 0;
-    log() << "TODO: DL-CONNECT";
+    log() << d.connection_id << " TODO: DL-CONNECT";
     d.srt = default_srt;
     d.t1v = 2 * d.srt;
     d.t3.start();
@@ -499,13 +502,14 @@ ConnectionState::stateptr_t AwaitingConnection::ua(const ax25::Packet& p)
     }
 
     if (d.layer3_initiated) {
-        log() << "DL-CONNECT confirm";
+        log() << d.connection_id << " DL-CONNECT confirm";
     } else {
         if (d.vs != d.va) {
             clear_iframe_queue();
-            log() << "DL-CONNECT indication";
+            log() << d.connection_id << " DL-CONNECT indication";
         }
     }
+    // log() << d.connection_id << " AwaitingConnection t1 stop";
     d.t1.stop();
     d.t3.stop();
     d.vs = 0;
@@ -545,8 +549,9 @@ ConnectionState::stateptr_t Connected::rr(const ax25::Packet& p)
 ConnectionState::stateptr_t Connected::dm(const ax25::Packet& p)
 {
     dl_error(DLError::E);
-    log() << "DL-DISCONNECT indication";
+    log() << d.connection_id << " DL-DISCONNECT indication";
     clear_iframe_queue();
+    // log() << d.connection_id << " Connected::dm t1 stop";
     d.t1.stop();
     d.t3.stop();
     return std::make_unique<Disconnected>(connection_);
@@ -619,7 +624,7 @@ ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
         d.vr = (d.vr + 1) % d.modulus;
         // clear reject exception
         // decrement sreject exception if >0
-        log() << "DL-DATA INDICATION";
+        log() << d.connection_id << " DL-DATA INDICATION";
         connection_->deliver(p);
         while (/*i frame stored*/ false) {
             //   retrieve stored V(r) i frame
@@ -697,8 +702,9 @@ ConnectionState::stateptr_t Connected::sabm(const ax25::Packet& p)
     dl_error(DLError::F);
     if (d.vs != d.va) {
         clear_iframe_queue();
-        log() << "DL-CONNECT indication";
+        log() << d.connection_id << " DL-CONNECT indication";
     }
+    // log() << d.connection_id << " Connected::sabm t1 stop";
     d.t1.stop();
     d.t3.start();
     d.vs = 0;
@@ -746,7 +752,7 @@ ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
         d.vr = (d.vr + 1) % d.modulus;
         // clear reject exception
         // decrement sreject exception if >0
-        log() << "DL-DATA INDICATION";
+        log() << d.connection_id << " DL-DATA INDICATION";
         connection_->deliver(p);
         while (/*i frame stored*/ false) {
             //   retrieve stored V(r) i frame
@@ -759,7 +765,7 @@ ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
             return nullptr;
         }
         if (!d.acknowledge_pending) {
-            // LM seize request.
+            // TODO: LM seize request.
             d.acknowledge_pending = true;
         }
         return nullptr;
@@ -808,6 +814,7 @@ ConnectionState::stateptr_t Connected::dl_connect(std::string_view dst,
 // Page 93.
 ConnectionState::stateptr_t Connected::timer1_tick()
 {
+    log() << d.connection_id << " Connected::timer1_tick()";
     d.rc = 1;
     transmit_enquiry();
     return std::make_unique<TimerRecovery>(connection_);
@@ -816,6 +823,7 @@ ConnectionState::stateptr_t Connected::timer1_tick()
 // Page 99.
 ConnectionState::stateptr_t TimerRecovery::timer1_tick()
 {
+    log() << d.connection_id << " TimerRecovery::timer1_tick()";
     if (d.rc != d.n2) {
         d.rc++;
         transmit_enquiry();
@@ -829,7 +837,7 @@ ConnectionState::stateptr_t TimerRecovery::timer1_tick()
     } else {
         dl_error(DLError::T);
     }
-    log() << "TODO: DL-Disconnect request?";
+    log() << d.connection_id << " TODO: DL-Disconnect request?";
     return std::make_unique<Disconnected>(connection_);
 }
 
@@ -839,7 +847,7 @@ ConnectionState::stateptr_t AwaitingConnection::timer1_tick()
     if (d.rc == d.n2) {
         clear_iframe_queue();
         dl_error(DLError::G);
-        log() << "DL-DISCONNECT indication";
+        log() << d.connection_id << " DL-DISCONNECT indication";
         return std::make_unique<States::Disconnected>(connection_);
     }
     d.rc++;
@@ -986,12 +994,19 @@ void ConnectionState::send_rnr(bool pf, int nr)
     connection_->send_packet(packet);
 }
 
-Connection::Connection(send_func_t send, receive_func_t receive)
-    : send_(send), receive_(receive), state_(std::make_unique<States::Disconnected>(this))
+Connection::Connection(int connection_id, send_func_t send, receive_func_t receive)
+    : connection_id_(connection_id),
+      send_(send),
+      receive_(receive),
+      state_(std::make_unique<States::Disconnected>(this))
 {
+    data_.connection_id = connection_id;
     data_.t1.set(3000);
     data_.t2.set(3000);
     data_.t3.set(300 * 1000);
+    data_.t1.set_connection_id(connection_id);
+    data_.t2.set_connection_id(connection_id);
+    data_.t3.set_connection_id(connection_id);
 }
 
 ConnectionState::ConnectionState(Connection* connection)
@@ -1029,6 +1044,7 @@ bool ConnectionState::iframe_pop()
         d.vs = (d.vs + 1) % d.modulus;
 
         if (!d.t1.running()) {
+            // log() << d.connection_id << " >>>>>>> t1 start from sending";
             d.t1.start();
             d.t3.stop();
         }
@@ -1042,7 +1058,8 @@ ConnectionState::connected_timer_recovery_disc(const ax25::Packet& p)
     clear_iframe_queue();
     const auto f = p.disc().poll();
     send_ua(f);
-    log() << "DL-DISCONNECT indication";
+    log() << d.connection_id << " DL-DISCONNECT indication";
+    // log() << d.connection_id << " Disconnect t1 stop";
     d.t1.stop();
     d.t3.stop();
     return std::make_unique<States::Disconnected>(connection_);
@@ -1051,7 +1068,8 @@ ConnectionState::connected_timer_recovery_disc(const ax25::Packet& p)
 void Connection::deliver(const ax25::Packet& p)
 {
     assert(p.has_iframe());
-    log() << "> Delivering data of size " << p.iframe().payload().size();
+    log() << connection_id_ << " > Delivering data of size "
+          << p.iframe().payload().size();
     receive_(p.iframe().payload());
 }
 

@@ -115,11 +115,11 @@ public:
     using time_point_t = std::chrono::time_point<std::chrono::steady_clock>;
     using duration_t = std::chrono::duration<int, std::milli>;
 
-    ConnEntry(Connection::send_func_t cb)
-        : con_(cb, [this](std::string_view p) { deliver(p); })
+    ConnEntry(int id, Connection::send_func_t cb)
+        : id_(id), con_(id, cb, [this](std::string_view p) { deliver(p); })
     {
         con_.set_state_change_cb([this](seqpacket::con::ConnectionState* s) {
-            log() << ">>> State => " << s->name();
+            log() << id_ << " >>> State => " << s->name();
             // Lock is already held at this point, because everything con_ does is
             // protected.
             // std::unique_lock<std::mutex> lk(mu_);
@@ -232,6 +232,7 @@ private:
     std::pair<time_point_t, bool> next_timer() const;
     void trigger_timers();
 
+    const int id_;
     std::mutex mu_;
     std::condition_variable cv_;
     std::deque<std::string> received_;
@@ -312,7 +313,7 @@ public:
             log() << "Not a seqpacket-related frame:\n" << ax25ms::proto2string(packet);
             return;
         }
-        log() << "Got seqpacket frame of size " << frame.payload().size();
+        // log() << "Got seqpacket frame of size " << frame.payload().size();
 
         // TODO: conn->();
         //  find the connection this is for.
@@ -371,7 +372,7 @@ public:
         // Lifetime of ce is until end of this function, since nothing else deletes it.
         auto& ce = *([this, &src, &dst] {
             Connection::send_func_t fs = [this](auto& p) { return send(p); };
-            auto conu = std::make_unique<ConnEntry>(fs);
+            auto conu = std::make_unique<ConnEntry>(get_new_id(), fs);
             std::unique_lock<std::mutex> lk(mu_);
             auto [itr, ok] = connections_.insert({ { src, dst }, std::move(conu) });
             if (!ok) {
@@ -463,7 +464,7 @@ public:
 
         auto& ce = *([this, &src, &dst] {
             Connection::send_func_t fs = [this](auto& p) { return send(p); };
-            auto conu = std::make_unique<ConnEntry>(fs);
+            auto conu = std::make_unique<ConnEntry>(get_new_id(), fs);
             std::unique_lock<std::mutex> lk(mu_);
             auto [itr, ok] = connections_.insert({ { src, dst }, std::move(conu) });
             if (!ok) {
@@ -516,6 +517,12 @@ public:
     }
 
 private:
+    int get_new_id()
+    {
+        static int n = 0;
+        return ++n;
+    }
+
     // Timer scheduler_;
     ax25ms::RouterService::Stub* router_;
     std::mutex mu_;

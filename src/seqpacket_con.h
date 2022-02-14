@@ -37,15 +37,17 @@ public:
     Timer(std::string_view sv) : name_(sv) {}
     void set(int ms) { ms_ = ms; }
     int get() { return ms_; }
+    void set_connection_id(int id) { connection_id_ = id; }
     void start()
     {
-        ax25ms::log() << "Starting timer " << name_ << " with ms=" << ms_;
+        ax25ms::log() << connection_id_ << " Starting timer " << name_
+                      << " with ms=" << ms_;
         running_ = true;
         deadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds{ ms_ };
     }
     void stop()
     {
-        ax25ms::log() << "Stopping timer " << name_;
+        ax25ms::log() << connection_id_ << " Stopping timer " << name_;
         running_ = false;
     }
     void restart()
@@ -61,6 +63,7 @@ public:
     time_point_t deadline() const { return deadline_; }
 
 private:
+    int connection_id_ = 0;
     int ms_ = -1;
     time_point_t deadline_;
     bool running_ = false;
@@ -68,6 +71,9 @@ private:
 };
 
 struct ConnectionData {
+    // ax25ms
+    int connection_id = 0;
+
     int modulus = 0;
 
     // Flags (Page 82)
@@ -187,12 +193,12 @@ public:
     virtual stateptr_t iframe(const ax25::Packet& p);
     virtual stateptr_t timer1_tick()
     {
-        ax25ms::log() << "ERROR: unhandled T1";
+        ax25ms::log() << d.connection_id << " ERROR: unhandled T1";
         return nullptr;
     }
     virtual stateptr_t timer3_tick()
     {
-        ax25ms::log() << "ERROR: unhandled T3";
+        ax25ms::log() << d.connection_id << " ERROR: unhandled T3";
         return nullptr;
     }
 
@@ -270,7 +276,7 @@ public:
     using receive_func_t = std::function<void(std::string_view)>;
     using state_change_t = std::function<void(ConnectionState*)>;
 
-    Connection(send_func_t send, receive_func_t receive);
+    Connection(int connection_id, send_func_t send, receive_func_t receive);
 #define P(xx)                        \
     template <typename T>            \
     void xx(const T& p)              \
@@ -313,6 +319,8 @@ public:
 
 protected:
     void state_change(std::unique_ptr<ConnectionState>&& st);
+
+    const int connection_id_;
 
     std::string src_;
     std::string dst_;
