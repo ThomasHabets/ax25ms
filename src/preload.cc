@@ -279,7 +279,7 @@ void init()
             t->open(e);
             debug = std::move(t);
         }
-        log() << "Initializing";
+        log() << "Initializing ax25ms for pid " << getpid();
 
         orig_socket = reinterpret_cast<socket_func_t>(dlsym(RTLD_NEXT, "socket"));
         orig_read = reinterpret_cast<read_func_t>(dlsym(RTLD_NEXT, "read"));
@@ -395,7 +395,7 @@ ssize_t Connection::read(void* buf, size_t count)
             read_queue_.pop_front();
             read_queue_cv_.notify_one();
         }
-        // Flush token.
+        // Flush select() token.
         {
             char buf[1];
             const auto rc = orig_read(fds_.client_fd(), buf, 1);
