@@ -65,15 +65,18 @@ void run(grpc::ClientReader<ax25ms::Frame>* reader)
     ax25ms::Frame frame;
     while (reader->Read(&frame)) {
         auto& payload = frame.payload();
-        std::clog << "Got frame size " << payload.size() << ": "
-                  << ax25ms::str2hex(payload) << "\n";
-
+        if (false) {
+            std::clog << "Got frame size " << payload.size() << ": "
+                      << ax25ms::str2hex(payload) << "\n";
+        }
         auto [packet, status] = ax25::parse(frame.payload(), fcs);
         if (!status.ok()) {
             std::cerr << "Failed to parse packet: " << status.error_message() << "\n";
         } else {
-            std::cout << ax25ms::proto2string(packet)
-                      << "-----------------------------------------------------\n";
+            const time_t now = time(0);
+            const auto ts = std::put_time(std::localtime(&now), "%F %T");
+            std::cout << ax25ms::proto2string(packet) << "--------------------" << ts
+                      << "-------------------------------\n";
         }
 
         std::ofstream fo("captured/" + std::to_string(time(nullptr)));
