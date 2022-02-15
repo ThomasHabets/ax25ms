@@ -620,7 +620,7 @@ ConnectionState::stateptr_t ConnectedTimerRecovery::iframe(const ax25::Packet& p
     const auto ns = p.iframe().ns();
     const auto poll = p.iframe().poll();
     const auto command = p.command_response();
-    if (command) {
+    if (!command) {
         // TODO: do we really care?
         dl_error(DLError::S);
         // discard frame (implicit)
