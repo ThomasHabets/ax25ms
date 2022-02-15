@@ -89,6 +89,7 @@ void test_server()
     std::vector<ax25::Packet> sent;
     std::vector<std::string> received;
     seqpacket::con::Connection con(
+        1,
         [&sent](const ax25::Packet& p) {
             sent.push_back(p);
             std::cout << "Sending packet: " << ax25ms::proto2string(p) << "\n";
@@ -173,6 +174,7 @@ void test_client()
     std::vector<ax25::Packet> sent;
     std::vector<std::string> received;
     seqpacket::con::Connection con(
+        1,
         [&sent](const ax25::Packet& p) {
             sent.push_back(p);
             std::cout << "Sending packet: " << ax25ms::proto2string(p) << "\n";
