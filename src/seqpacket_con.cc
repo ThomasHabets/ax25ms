@@ -241,6 +241,9 @@ void ConnectionState::invoke_retransmission(int nr)
         assert(itr != d.iframe_resend_queue.rend());
         d.iframe_queue_.push_front(*itr++);
     }
+    // TODO: the above isn't really creating the right output, so
+    // let's just overwrite it. But let's sync it with the specs.
+    d.iframe_queue_ = d.iframe_resend_queue;
 }
 
 void ConnectionState::update_ack(int nr)
