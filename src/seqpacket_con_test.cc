@@ -16,6 +16,7 @@ limitations under the License.
 #include "seqpacket_con.h"
 #include "util.h"
 
+#include <google/protobuf/text_format.h>
 #include <google/protobuf/util/message_differencer.h>
 
 namespace {
@@ -23,13 +24,45 @@ namespace {
 std::string client = "M0THC-1";
 std::string tester = "M0THC-2";
 
+void assert_eq(size_t got, size_t want)
+{
+    if (got != want) {
+        std::cerr << "Got " << got << " want " << want << "\n";
+        exit(1);
+    }
+}
+
 void assert_eq(const ax25::Packet& got, const ax25::Packet& want)
 {
     if (!google::protobuf::util::MessageDifferencer::Equals(got, want)) {
-        std::cerr << "Protos differ. Got: " << ax25ms::proto2string(got)
-                  << "\nwant: " << ax25ms::proto2string(want) << "\n";
+        std::cerr << "--------------------\n"
+                  << "Protos differ. Got:\n"
+                  << ax25ms::proto2string(got) << "\nwant:\n"
+                  << ax25ms::proto2string(want) << "\n";
         exit(1);
     }
+}
+
+void assert_eq(const std::vector<ax25::Packet>& got,
+               const std::vector<ax25::Packet>& want)
+{
+    if (got.size() != want.size()) {
+        std::cerr << "Got size " << got.size() << " want size " << want.size() << "\n";
+        exit(1);
+    }
+    for (size_t i = 0; i < got.size(); i++) {
+        assert_eq(got[i], want[i]);
+    }
+}
+
+ax25::Packet mkpacket(const std::string& s);
+void assert_eq(const std::vector<ax25::Packet>& got, const std::vector<std::string>& want)
+{
+    std::vector<ax25::Packet> w2;
+    for (auto& w : want) {
+        w2.push_back(mkpacket(w));
+    }
+    assert_eq(got, w2);
 }
 
 ax25::Packet packet_base(bool cli, bool cr)
@@ -45,6 +78,14 @@ ax25::Packet packet_base(bool cli, bool cr)
     p.set_command_response(cr);
     p.set_command_response_la(!cr);
     return p;
+}
+
+ax25::Packet mkpacket(const std::string& s)
+{
+    google::protobuf::io::ArrayInputStream arr(s.data(), s.size());
+    ax25::Packet ret;
+    google::protobuf::TextFormat::Parse(&arr, &ret);
+    return ret;
 }
 
 ax25::Packet packet_rr(bool cli, int nr, bool pf, int cr)
@@ -86,13 +127,14 @@ packet_iframe(bool cli, int nr, int ns, bool poll, bool cr, std::string_view pay
 
 void test_server()
 {
+    std::cerr << "=========== Test Server ===============\n";
     std::vector<ax25::Packet> sent;
     std::vector<std::string> received;
     seqpacket::con::Connection con(
         1,
         [&sent](const ax25::Packet& p) {
             sent.push_back(p);
-            std::cout << "Sending packet: " << ax25ms::proto2string(p) << "\n";
+            std::cout << "Sending packet:\n" << ax25ms::proto2string(p) << "\n";
             return grpc::Status::OK;
         },
         [&received](std::string_view p) {
@@ -103,145 +145,248 @@ void test_server()
         std::cout << ">>> State change to " << s->name() << "\n";
     });
 
-    std::cout << "Connecting…\n";
+    std::clog << "---------------- Connecting…\n";
     {
         con.sabm(packet_sabm(true));
     }
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_ua(false, true));
+    assert_eq(sent, { packet_ua(false, true) });
     sent.clear();
 
     int ns = 0;
-    std::cout << "Receive data…\n";
+    std::clog << "----------------- Receive data…\n";
     {
-        ax25::Packet p;
-        p.set_command_response(true);
-        p.mutable_iframe()->set_payload("blah");
-        p.mutable_iframe()->set_ns(ns++);
-        con.iframe(p);
+        con.iframe(mkpacket("iframe {payload: 'blah' ns: " + std::to_string(ns++) +
+                            "} command_response: true"));
     }
-    assert(received.size() == 1);
+    assert_eq(received.size(), 1);
     assert(received[0] == "blah");
     received.clear();
 
-    std::cout << "Receive data…\n";
+    std::clog << "-------- Receive data2…\n";
     {
-        ax25::Packet p;
-        p.set_command_response(true);
-        p.mutable_iframe()->set_payload("blah2");
-        p.mutable_iframe()->set_ns(ns++);
-        con.iframe(p);
+        con.iframe(mkpacket("iframe {payload: 'blah2' ns: " + std::to_string(ns++) +
+                            "} command_response: true"));
     }
-    assert(received.size() == 1);
+    assert_eq(received.size(), 1);
     assert(received[0] == "blah2");
     received.clear();
     assert(sent.empty());
 
-    std::cout << "Ticking timer: " << con.data().t1.running() << "\n";
+    std::clog << "----------- Ticking timer: " << con.data().t1.running() << "\n";
     con.timer1_tick();
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_rr(false, 2, true, false));
+    assert_eq(sent,
+              { "src: 'M0THC-2' dst: 'M0THC-1' rr { nr: 2 poll: true } command_response: "
+                "true" });
     sent.clear();
 
-    std::cout << "Send data…\n";
+    std::clog << "------------ Send data…\n";
     {
         con.dl_data("hello");
     }
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_iframe(false, 2, 0, false, 0, "hello"));
+    assert_eq(sent,
+              { "src: 'M0THC-2' dst: 'M0THC-1' iframe { nr: 2 pid: 240 payload: "
+                "'hello' } command_response: true" });
     sent.clear();
 
-    std::cout << "Send data…\n";
+    std::clog << "------------ Send data…\n";
     {
         con.dl_data("world");
     }
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_iframe(false, 2, 1, false, 0, "world"));
+    assert_eq(sent,
+              {
+                  "src: 'M0THC-2' dst: 'M0THC-1' iframe { ns: 1 nr: 2 pid: 240 payload: "
+                  "'world' } command_response: true",
+              });
     sent.clear();
 
-    std::cout << "Disconnecting…\n";
+    std::clog << "Disconnecting…\n";
     {
         ax25::Packet p;
         con.disc(p);
     }
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_ua(false, false));
+    assert_eq(sent, { packet_ua(false, false) });
     sent.clear();
 }
 
 void test_client()
 {
+    std::cerr << "=========== Test Client ===============\n";
     std::vector<ax25::Packet> sent;
     std::vector<std::string> received;
     seqpacket::con::Connection con(
         1,
         [&sent](const ax25::Packet& p) {
             sent.push_back(p);
-            std::cout << "Sending packet: " << ax25ms::proto2string(p) << "\n";
+            std::clog << "Sending packet:\n" << ax25ms::proto2string(p) << "\n";
             return grpc::Status::OK;
         },
         [&received](std::string_view p) {
             received.push_back(std::string(p));
-            std::cout << "Received data: <" << p << ">\n";
+            std::clog << "Received data: <" << p << ">\n";
         });
     con.set_state_change_cb([](seqpacket::con::ConnectionState* s) {
-        std::cout << ">>> State change to " << s->name() << "\n";
+        std::clog << ">>> State change to " << s->name() << "\n";
     });
 
-    std::cout << "Connecting…\n";
+    std::clog << "---------- Connecting…\n";
     {
         con.dl_connect(client, tester);
     }
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_sabm(false));
+    assert_eq(sent, { packet_sabm(false) });
     sent.clear();
 
-    std::cout << "Connection accepted\n";
+    std::clog << "------------ Connection accepted\n";
     {
         con.ua(packet_ua(false, true));
     }
     assert(sent.empty());
     sent.clear();
 
-    std::cout << "--- Send data1…\n";
+    std::clog << "--- Send data1…\n";
     con.dl_data("hello");
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_iframe(false, 0, 0, false, true, "hello"));
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 0, false, true, "hello"),
+              });
     sent.clear();
 
-    std::cout << "--- Send data2…\n";
+    std::clog << "--- Send data2…\n";
     con.dl_data("big");
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_iframe(false, 0, 1, false, true, "big"));
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 1, false, true, "big"),
+              });
     sent.clear();
 
-    std::cout << "--- Send data3…\n";
+    std::clog << "--- Send data3…\n";
     con.dl_data("world");
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_iframe(false, 0, 2, false, true, "world"));
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 2, false, true, "world"),
+              });
     sent.clear();
 
-    std::cout << "--- Put into timer recovery…\n";
+    std::clog << "--- Put into timer recovery…\n";
     con.timer1_tick();
-    assert(sent.size() == 1);
-    assert_eq(sent[0], packet_rr(false, 0, true, true));
+    assert_eq(sent,
+              {
+                  packet_rr(false, 0, true, true),
+              });
     sent.clear();
 
-    std::cout << "--- Tester replies that it only got first packet…\n";
+    std::clog << "--- Tester replies that it only got first packet…\n";
     con.rr(packet_rr(false, 1, true, false));
-    assert_eq(sent[0], packet_iframe(false, 0, 1, false, true, "big"));
-    assert_eq(sent[1], packet_iframe(false, 0, 2, false, true, "world"));
-    assert(sent.size() == 2);
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 1, false, true, "big"),
+                  packet_iframe(false, 0, 2, false, true, "world"),
+              });
     sent.clear();
 
-    std::cout << "--- Tester replies that it only got first two packets…\n";
+    std::clog << "--- Tester replies that it only got first two packets…\n";
     con.rr(packet_rr(false, 2, true, false));
-    assert(sent.size() == 1);
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 2, false, true, "world"),
+              });
     sent.clear();
+
+    std::clog << "--- Send data to fill window…\n";
+    con.dl_data("data3"); // 3
+    con.dl_data("data4"); // 4
+    con.dl_data("data5"); // 5
+    con.dl_data("data6"); // 6
+    con.dl_data("data7"); // 7
+    con.dl_data("data8"); // 0
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 3, false, true, "data3"),
+                  packet_iframe(false, 0, 4, false, true, "data4"),
+                  packet_iframe(false, 0, 5, false, true, "data5"),
+                  packet_iframe(false, 0, 6, false, true, "data6"),
+                  packet_iframe(false, 0, 7, false, true, "data7"),
+                  packet_iframe(false, 0, 0, true, true, "data8"), // Poll!
+              });
+    sent.clear();
+
+    std::clog << "--- Send data one past window…\n";
+    con.dl_data("data9"); // 1
+    assert(sent.size() == 0);
+
+    std::clog << "--- Send four more past window…\n";
+    con.dl_data("data10"); // 2
+    con.dl_data("data11"); // 3
+    con.dl_data("data12"); // 4
+    con.dl_data("data13"); // 5
+    assert(sent.size() == 0);
+
+    std::clog << "--- Ack one packet…\n";
+    con.rr(packet_rr(false, 3, true, false)); // acking 'world'
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 3, false, true, "data3"),
+                  packet_iframe(false, 0, 4, false, true, "data4"),
+                  packet_iframe(false, 0, 5, false, true, "data5"),
+                  packet_iframe(false, 0, 6, false, true, "data6"),
+                  packet_iframe(false, 0, 7, false, true, "data7"),
+                  packet_iframe(false, 0, 0, false, true, "data8"),
+                  packet_iframe(false, 0, 1, true, true, "data9"), // Poll!
+              });
+    sent.clear();
+
+    std::clog << "--- Ack two more packet…\n";
+    con.rr(packet_rr(false, 5, true, false));
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 5, false, true, "data5"),
+                  packet_iframe(false, 0, 6, false, true, "data6"),
+                  packet_iframe(false, 0, 7, false, true, "data7"),
+                  packet_iframe(false, 0, 0, false, true, "data8"),
+                  packet_iframe(false, 0, 1, false, true, "data9"),
+                  packet_iframe(false, 0, 2, false, true, "data10"),
+                  packet_iframe(false, 0, 3, true, true, "data11"), // Poll!
+              });
+    sent.clear();
+
+    std::clog << "--- Ack all but one outstanding packet…\n";
+    con.rr(packet_rr(false, 3, true, false));
+    assert_eq(sent,
+              {
+                  packet_iframe(false, 0, 3, false, true, "data11"),
+                  packet_iframe(false, 0, 4, false, true, "data12"),
+                  packet_iframe(false, 0, 5, false, true, "data13"),
+              });
+    sent.clear();
+
+    std::clog << "--- Ack but one outstanding packet (final)…\n";
+    con.rr(packet_rr(false, 5, true, false));
+    assert_eq(sent, { packet_iframe(false, 0, 5, false, true, "data13") });
+    sent.clear();
+
+    std::clog << "--- Ack final packet…\n";
+    con.rr(packet_rr(false, 6, true, false));
+    assert(sent.size() == 0);
+    sent.clear();
+
+    std::clog << "--- Probe for more…\n";
+    con.rr(packet_rr(false, 6, true, true));
+    assert_eq(sent,
+              {
+                  packet_rr(false, 0, true, false),
+              });
+    sent.clear();
+
+    std::clog << "--- Close…\n";
+    con.disc(mkpacket("src: 'M0THC-1'"));
+    assert_eq(sent,
+              {
+                  "dst: 'M0THC-1' src: 'M0THC-2' ua {} command_response_la: true",
+              });
 }
 
 int main()
 {
-    // test_server();
+    test_server();
     test_client();
+    std::clog << "OK\n";
 }
