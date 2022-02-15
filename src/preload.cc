@@ -561,7 +561,7 @@ int Connection::accept(struct sockaddr* addr, socklen_t* addrlen) const
     req.mutable_packet()->mutable_metadata()->mutable_source_address()->set_address(src_);
 
     if (!stream->Write(req)) {
-        log() << "Failed to start Accept RPC: " << stream_->Finish().error_message();
+        log() << "Failed to start Accept RPC: " << stream->Finish().error_message();
         errno = ECONNREFUSED;
         return -1;
     }
