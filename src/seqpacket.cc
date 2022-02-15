@@ -135,6 +135,7 @@ public:
     template <typename T>
     void apply(T func)
     {
+        std::unique_lock<std::mutex> lk(mu_);
         // TODO: assert func() returns void.
         func(con_);
         cv_.notify_all();
