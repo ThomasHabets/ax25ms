@@ -16,12 +16,11 @@ limitations under the License.
 #ifndef __AX25MS_H_INCLUDE__
 #define __AX25MS_H_INCLUDE__
 
-#include "proto/gen/ax25.pb.h"
-#include <chrono>
+#include <google/protobuf/message.h>
+
+#include <string_view>
 #include <sstream>
 #include <string>
-
-#include <google/protobuf/text_format.h>
 
 namespace ax25ms {
 
@@ -54,14 +53,7 @@ private:
 };
 
 LogLine log();
-
-template <typename T>
-std::string proto2string(const T& proto)
-{
-    std::string str;
-    google::protobuf::TextFormat::PrintToString(proto, &str);
-    return str;
-}
+std::string proto2string(const google::protobuf::Message& proto);
 
 std::string str2hex(std::string_view data);
 

@@ -13,6 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#ifndef __INCLUDE__SEQPACKET_CON_H__
+#define __INCLUDE__SEQPACKET_CON_H__
 /*
  * Replacement state machine for seqpacket.
  */
@@ -28,6 +30,7 @@ limitations under the License.
 #include <grpcpp/grpcpp.h>
 
 namespace seqpacket::con {
+
 class Connection;
 class Timer
 {
@@ -191,40 +194,24 @@ public:
     virtual stateptr_t rr(const ax25::Packet& p);
     virtual stateptr_t ui(const ax25::Packet& p);
     virtual stateptr_t iframe(const ax25::Packet& p);
-    virtual stateptr_t timer1_tick()
-    {
-        ax25ms::log() << d.connection_id << " ERROR: unhandled T1";
-        return nullptr;
-    }
-    virtual stateptr_t timer3_tick()
-    {
-        ax25ms::log() << d.connection_id << " ERROR: unhandled T3";
-        return nullptr;
-    }
+    virtual stateptr_t timer1_tick();
+    virtual stateptr_t timer3_tick();
 
     // Request establishment of AX.25.
-    virtual stateptr_t dl_connect(std::string_view dst, std::string_view src)
-    {
-        return nullptr;
-    }
+    virtual stateptr_t dl_connect(std::string_view dst, std::string_view src);
 
     // Transmit data using connection oriented protocol.
-    virtual stateptr_t dl_data(std::string_view sv) { return nullptr; }
+    virtual stateptr_t dl_data(std::string_view sv);
 
     // Poll the transmit queue and transmit if appropriate.
     // Call after any other op, in case they cleared to send.
-    virtual stateptr_t dl_data_poll() { return nullptr; }
+    virtual stateptr_t dl_data_poll();
 
     // Transmit data using connectionless protocol.
-    // virtual stateptr_t dl_unit_data() { return nullptr; };
+    // virtual stateptr_t dl_unit_data();
 
     // Release AX.25 connection.
-    virtual stateptr_t dl_disconnect() { return nullptr; }
-
-    stateptr_t connected_timer_recovery_disc(const ax25::Packet& p);
-
-    // Send as much as possible on the transmit queue.
-    void iframe_pop();
+    virtual stateptr_t dl_disconnect();
 
     virtual bool can_receive_data() const = 0;
 
@@ -338,3 +325,4 @@ protected:
 };
 
 } // namespace seqpacket::con
+#endif

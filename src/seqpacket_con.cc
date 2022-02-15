@@ -85,6 +85,13 @@ void ConnectionState::dl_error(const DLError& e) const
     log() << d.connection_id << " DL ERROR: " << int(e) << " (" << s << ")";
 }
 
+/*
+ * Default state callback handlers.
+ *
+ * Some throw, because the connection should die. Others are just
+ * warnings, maybe because handler is just not implemented.
+ */
+
 ConnectionState::stateptr_t ConnectionState::iframe(const ax25::Packet& p)
 {
     throw std::runtime_error("Unexpected iframe in state " + name());
@@ -122,6 +129,40 @@ ConnectionState::stateptr_t ConnectionState::ui(const ax25::Packet& p)
 {
     throw std::runtime_error("Unexpected ui in state " + name());
 }
+
+ConnectionState::stateptr_t ConnectionState::dl_data(std::string_view sv)
+{
+    log() << d.connection_id << " ERROR: unhandled dl_data in state " << name();
+    return nullptr;
+}
+
+ConnectionState::stateptr_t ConnectionState::timer1_tick()
+{
+    log() << d.connection_id << " ERROR: unhandled T1 in state " << name();
+    return nullptr;
+}
+
+ConnectionState::stateptr_t ConnectionState::timer3_tick()
+{
+    log() << d.connection_id << " ERROR: unhandled T3 in state " << name();
+    return nullptr;
+}
+
+ConnectionState::stateptr_t ConnectionState::dl_connect(std::string_view dst,
+                                                        std::string_view src)
+{
+    log() << d.connection_id << " ERROR: unexpected dl_connect in state " << name();
+    return nullptr;
+}
+
+ConnectionState::stateptr_t ConnectionState::dl_disconnect()
+{
+    log() << d.connection_id << " ERROR: unexpected dl_disconnect in state " << name();
+    return nullptr;
+}
+
+ConnectionState::stateptr_t ConnectionState::dl_data_poll() { return nullptr; }
+
 
 // Page 106.
 void ConnectionState::nr_error_recovery()
@@ -317,6 +358,45 @@ void ConnectionState::set_version_2_2()
 
 namespace States {
 
+class ConnectedTimerRecovery : public ConnectionState
+{
+public:
+    ConnectedTimerRecovery(Connection* con) : ConnectionState(con) {}
+    stateptr_t dl_disconnect() override;
+    stateptr_t dl_data(std::string_view sv) override;
+    stateptr_t dl_data_poll() override;
+    stateptr_t disc(const ax25::Packet& p) override;
+    stateptr_t ua(const ax25::Packet& p) override;
+    stateptr_t dm(const ax25::Packet& p) override;
+    stateptr_t iframe(const ax25::Packet& p) override;
+
+    bool can_receive_data() const override { return true; }
+};
+
+// Page 92.
+class Connected final : public ConnectedTimerRecovery
+{
+public:
+    Connected(Connection* con) : ConnectedTimerRecovery(con) {}
+    std::string name() const override { return StateNames::Connected; }
+
+    stateptr_t frmr(const ax25::Packet& p) override;
+    stateptr_t rr(const ax25::Packet& p) override;
+    stateptr_t ui(const ax25::Packet& p) override;
+    stateptr_t sabm(const ax25::Packet& p) override;
+    stateptr_t timer1_tick() override;
+    stateptr_t dl_connect(std::string_view dst, std::string_view src) override;
+};
+
+class TimerRecovery final : public ConnectedTimerRecovery
+{
+public:
+    TimerRecovery(Connection* con) : ConnectedTimerRecovery(con) {}
+    std::string name() const override { return StateNames::TimerRecovery; }
+
+    stateptr_t rr(const ax25::Packet& p) override;
+    stateptr_t timer1_tick() override;
+};
 
 class Disconnected final : public ConnectionState
 {
@@ -349,48 +429,6 @@ class AwaitingRelease final : public ConnectionState
 public:
     AwaitingRelease(Connection* con) : ConnectionState(con) {}
     bool can_receive_data() const override { return false; }
-};
-
-// Page 92.
-class Connected final : public ConnectionState
-{
-public:
-    Connected(Connection* con) : ConnectionState(con) {}
-    std::string name() const override { return StateNames::Connected; }
-
-    stateptr_t ua(const ax25::Packet& p) override;
-    stateptr_t dm(const ax25::Packet& p) override;
-    stateptr_t frmr(const ax25::Packet& p) override;
-    stateptr_t rr(const ax25::Packet& p) override;
-    stateptr_t ui(const ax25::Packet& p) override;
-    stateptr_t disc(const ax25::Packet& p) override;
-    stateptr_t sabm(const ax25::Packet& p) override;
-    stateptr_t iframe(const ax25::Packet& p) override;
-
-    stateptr_t timer1_tick() override;
-
-    stateptr_t dl_data(std::string_view sv) override;
-    stateptr_t dl_data_poll() override;
-    stateptr_t dl_connect(std::string_view dst, std::string_view src) override;
-    stateptr_t dl_disconnect() override;
-    bool can_receive_data() const override { return true; }
-};
-
-class TimerRecovery final : public ConnectionState
-{
-public:
-    TimerRecovery(Connection* con) : ConnectionState(con) {}
-    std::string name() const override { return StateNames::TimerRecovery; }
-
-    stateptr_t dl_data(std::string_view sv) override;
-    stateptr_t dl_data_poll() override;
-    stateptr_t iframe(const ax25::Packet& p) override;
-    stateptr_t rr(const ax25::Packet& p) override;
-    stateptr_t disc(const ax25::Packet& p) override;
-    stateptr_t dl_disconnect() override;
-    stateptr_t timer1_tick() override;
-
-    bool can_receive_data() const override { return true; }
 };
 
 // Page 99.
@@ -515,8 +553,8 @@ ConnectionState::stateptr_t AwaitingConnection::ua(const ax25::Packet& p)
     return std::make_unique<Connected>(connection_);
 }
 
-// Page 93.
-ConnectionState::stateptr_t Connected::ua(const ax25::Packet& p)
+// Page 93 100.
+ConnectionState::stateptr_t ConnectedTimerRecovery::ua(const ax25::Packet& p)
 {
     dl_error(DLError::C);
     establish_data_link();
@@ -541,8 +579,8 @@ ConnectionState::stateptr_t Connected::rr(const ax25::Packet& p)
     return nullptr;
 }
 
-// Page 93.
-ConnectionState::stateptr_t Connected::dm(const ax25::Packet& p)
+// Page 93 & 101.
+ConnectionState::stateptr_t ConnectedTimerRecovery::dm(const ax25::Packet& p)
 {
     dl_error(DLError::E);
     log() << d.connection_id << " DL-DISCONNECT indication";
@@ -575,21 +613,14 @@ ConnectionState::stateptr_t Connected::ui(const ax25::Packet& p)
     return nullptr;
 }
 
-// Page 100.
-ConnectionState::stateptr_t TimerRecovery::disc(const ax25::Packet& p)
-{
-    return connected_timer_recovery_disc(p);
-}
-
-// Page 102.
-//
-// TODO: double check.
-ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
+// Page 96 & 102.
+ConnectionState::stateptr_t ConnectedTimerRecovery::iframe(const ax25::Packet& p)
 {
     const auto nr = p.iframe().nr();
     const auto ns = p.iframe().ns();
     const auto poll = p.iframe().poll();
-    if (!p.command_response()) {
+    const auto command = p.command_response();
+    if (command) {
         // TODO: do we really care?
         dl_error(DLError::S);
         // discard frame (implicit)
@@ -602,15 +633,19 @@ ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
         return std::make_unique<AwaitingConnection>(connection_);
     }
     if (!in_range(d.va, nr, d.vs, d.modulus)) {
-        // if (!(d.va <= nr && nr <= d.vs)) {
         nr_error_recovery();
         return std::make_unique<AwaitingConnection>(connection_);
     }
-    update_ack(nr);
+    if (name() == "Connected") {
+        check_iframe_acked(nr);
+    } else {
+        update_ack(nr); // Different from Connected.
+        assert(name() == "TimerRecovery");
+    }
     if (d.own_receiver_busy) {
         // discard (implicit)
         if (poll) {
-            send_rnr(true, d.vr); // TODO: "expidited"
+            send_rnr(true, d.vr); // TODO: If TimerRecovery then "expidited"
             d.acknowledge_pending = false;
         }
         return nullptr;
@@ -622,11 +657,15 @@ ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
         // decrement sreject exception if >0
         log() << d.connection_id << " DL-DATA INDICATION";
         connection_->deliver(p);
+
+        // TODO: Check for any out of order iframes unlocking
+        // previously received packets.
         while (/*i frame stored*/ false) {
             //   retrieve stored V(r) i frame
             //   DL-DATA indication
             d.vr = (d.vr + 1) % d.modulus;
         }
+
         if (poll) {
             send_rr(true, d.vr, false);
             d.acknowledge_pending = false;
@@ -641,44 +680,58 @@ ConnectionState::stateptr_t TimerRecovery::iframe(const ax25::Packet& p)
 
     if (d.reject_exception) {
         // discard iframe (implicit).
-        if (!poll) {
-            return nullptr;
+        if (poll) {
+            send_rr(true, d.vr, false);
+            d.acknowledge_pending = false;
         }
-        send_rr(true, d.vr, false);
-        d.acknowledge_pending = false;
         return nullptr;
     }
 
+    auto tail_srej_off = [this, poll] {
+        // discard iframe (implicit)
+        d.reject_exception = true;
+        send_rej(poll, d.vr);
+        d.acknowledge_pending = false;
+        return nullptr;
+    };
+
     if (!d.srej_enabled) {
-        goto tail_srej_off;
+        return tail_srej_off();
     }
+
     // TODO: save contents of iframe
+
     if (d.sreject_exception > 0) {
         d.sreject_exception++;
         send_srej(false, ns);
         d.acknowledge_pending = false;
         return nullptr;
     }
-    if (ns > d.vr + 1) {
-        goto tail_srej_off;
-    }
-    d.sreject_exception++;
-    send_srej(false, d.vr);
-    d.acknowledge_pending = false;
-    return nullptr;
 
-tail_srej_off:
-    // discard iframe (implicit)
-    d.reject_exception = true;
-    send_rej(poll, d.vr);
+    // TODO: Original says "ns > vr + 1", but this is correct with mod
+    // arithmetic?
+    //
+    // But this means we only accept one packet out of order?
+    if (ns != d.vr + 1) {
+        return tail_srej_off();
+    }
+
+    d.sreject_exception++;
+    send_srej(false, d.vr); // Or should it be true? F=1
     d.acknowledge_pending = false;
     return nullptr;
 }
 
-// Page 93.
-ConnectionState::stateptr_t Connected::disc(const ax25::Packet& p)
+// Page 93 & 100.
+ConnectionState::stateptr_t ConnectedTimerRecovery::disc(const ax25::Packet& p)
 {
-    return connected_timer_recovery_disc(p);
+    clear_iframe_queue();
+    const auto f = p.disc().poll();
+    send_ua(f);
+    log() << d.connection_id << " DL-DISCONNECT indication";
+    d.t1.stop();
+    d.t3.stop();
+    return std::make_unique<States::Disconnected>(connection_);
 }
 
 // Page 93.
@@ -706,81 +759,6 @@ ConnectionState::stateptr_t Connected::sabm(const ax25::Packet& p)
     d.vs = 0;
     d.va = 0;
     d.vr = 0;
-    return nullptr;
-}
-
-// Page 96.
-//
-// TODO: double check, and maybe merge with TimerRecovery::iframe.
-ConnectionState::stateptr_t Connected::iframe(const ax25::Packet& p)
-{
-    const auto ns = p.iframe().ns();
-    const auto nr = p.iframe().nr();
-    const auto poll = p.iframe().poll();
-    const auto command = p.command_response();
-    if (!command) {
-        // TODO: do we really care?
-        dl_error(DLError::S);
-        // discard frame (implicit).
-        return nullptr;
-    }
-    if (p.iframe().payload().size() > d.n1) {
-        dl_error(DLError::O);
-        establish_data_link();
-        d.layer3_initiated = false;
-        return std::make_unique<AwaitingConnection>(connection_);
-    }
-    if (!in_range(d.va, nr, d.vs, d.modulus)) {
-        nr_error_recovery();
-        return std::make_unique<AwaitingConnection>(connection_);
-    }
-    check_iframe_acked(nr);
-    if (d.own_receiver_busy) {
-        // discard (implicit)
-        if (poll) {
-            send_rnr(true, d.vr);
-            d.acknowledge_pending = false;
-        }
-        return nullptr;
-    }
-
-    if (ns == d.vr) {
-        d.vr = (d.vr + 1) % d.modulus;
-        // clear reject exception
-        // decrement sreject exception if >0
-        log() << d.connection_id << " DL-DATA INDICATION";
-        connection_->deliver(p);
-
-        // TODO: Check for any out of order iframes unlocking
-        // previously received packets.
-        while (/*i frame stored*/ false) {
-            //   retrieve stored V(r) i frame
-            //   DL-DATA indication
-            d.vr = (d.vr + 1) % d.modulus;
-        }
-
-        if (poll) {
-            send_rr(true, d.vr, false);
-            d.acknowledge_pending = false;
-            return nullptr;
-        }
-        if (!d.acknowledge_pending) {
-            // TODO: LM seize request.
-            d.acknowledge_pending = true;
-        }
-        return nullptr;
-    }
-
-    if (d.reject_exception) {
-        // discard iframe (implicit).
-        if (!poll) {
-            return nullptr;
-        }
-        send_rr(true, d.vr, false);
-        d.acknowledge_pending = false;
-        return nullptr;
-    }
-
     return nullptr;
 }
 
@@ -857,8 +835,57 @@ ConnectionState::stateptr_t AwaitingConnection::timer1_tick()
     return nullptr;
 }
 
-// Page 92.
-ConnectionState::stateptr_t Connected::dl_data(std::string_view sv)
+// Page 92 & 98.
+ConnectionState::stateptr_t ConnectedTimerRecovery::dl_data_poll()
+{
+    while (!d.iframe_queue_.empty()) {
+        // log() << d.connection_id << " flush?";
+        // Receiver busy.
+        if (d.peer_receiver_busy) {
+            // "Push i frame on queue", here meaning leave it on the
+            // queue.
+            // log() << d.connection_id << " no, receiver busy";
+            break;
+        }
+
+        // Check window full.
+        if (d.vs == (d.va + d.k) % d.modulus) {
+            // Same.
+            // log() << d.connection_id << " no, window is closed vs va k " << d.vs
+            // << d.va << d.k;
+            break;
+        }
+
+        const auto ns = d.vs;
+        const auto nr = d.vr;
+        auto packet = d.iframe_queue_.front();
+        d.iframe_queue_.pop_front();
+
+        auto& iframe = *packet.mutable_iframe();
+        iframe.set_ns(ns);
+        iframe.set_nr(nr);
+
+        // OUT OF SPEC:
+        // If this is the last packet in the window then set the poll bit.
+        if (d.vs == (d.va + d.k + d.modulus - 1) % d.modulus) {
+            iframe.set_poll(true);
+        }
+
+        connection_->send_packet(packet);
+
+        d.vs = (d.vs + 1) % d.modulus;
+
+        if (!d.t1.running()) {
+            // log() << d.connection_id << " >>>>>>> t1 start from sending";
+            d.t1.start();
+            d.t3.stop();
+        }
+    }
+    return nullptr;
+}
+
+// Page 92 & 98.
+ConnectionState::stateptr_t ConnectedTimerRecovery::dl_data(std::string_view sv)
 {
     ax25::Packet p;
     auto& iframe = *p.mutable_iframe();
@@ -870,49 +897,9 @@ ConnectionState::stateptr_t Connected::dl_data(std::string_view sv)
     return nullptr;
 }
 
-// Page 92.
-ConnectionState::stateptr_t Connected::dl_data_poll()
+// Page 92 & 98.
+ConnectionState::stateptr_t ConnectedTimerRecovery::dl_disconnect()
 {
-    iframe_pop();
-    return nullptr;
-}
-
-// Page 98.
-ConnectionState::stateptr_t TimerRecovery::dl_data_poll()
-{
-    iframe_pop();
-    return nullptr;
-}
-
-// Page 98.
-ConnectionState::stateptr_t TimerRecovery::dl_data(std::string_view sv)
-{
-    // TODO: merge with Connected::dl_data()
-    ax25::Packet p;
-    auto& iframe = *p.mutable_iframe();
-    iframe.set_pid(0xf0);
-    iframe.set_payload(sv.data(), sv.size());
-    p.set_command_response(true);
-    d.iframe_resend_queue.push_back(p);
-    d.iframe_queue_.push_back(std::move(p));
-    return nullptr;
-}
-
-// Page 92.
-ConnectionState::stateptr_t Connected::dl_disconnect()
-{
-    clear_iframe_queue();
-    d.rc = 0;
-    send_disc(true);
-    d.t3.stop();
-    d.t1.start();
-    return std::make_unique<AwaitingRelease>(connection_);
-}
-
-// Page 98.
-ConnectionState::stateptr_t TimerRecovery::dl_disconnect()
-{
-    // TODO: merge with Connected.
     clear_iframe_queue();
     d.rc = 0;
     send_disc(true);
@@ -1026,67 +1013,6 @@ ConnectionState::ConnectionState(Connection* connection)
 {
 }
 
-// Page 92 & 98.
-void ConnectionState::iframe_pop()
-{
-    while (!d.iframe_queue_.empty()) {
-        // log() << d.connection_id << " flush?";
-        // Receiver busy.
-        if (d.peer_receiver_busy) {
-            // "Push i frame on queue", here meaning leave it on the
-            // queue.
-            // log() << d.connection_id << " no, receiver busy";
-            return;
-        }
-
-        // Check window full.
-        if (d.vs == (d.va + d.k) % d.modulus) {
-            // Same.
-            // log() << d.connection_id << " no, window is closed vs va k " << d.vs
-            // << d.va << d.k;
-            return;
-        }
-
-        const auto ns = d.vs;
-        const auto nr = d.vr;
-        auto packet = d.iframe_queue_.front();
-        d.iframe_queue_.pop_front();
-
-        auto& iframe = *packet.mutable_iframe();
-        iframe.set_ns(ns);
-        iframe.set_nr(nr);
-
-        // OUT OF SPEC:
-        // If this is the last packet in the window then set the poll bit.
-        if (d.vs == (d.va + d.k + d.modulus - 1) % d.modulus) {
-            iframe.set_poll(true);
-        }
-
-        connection_->send_packet(packet);
-
-        d.vs = (d.vs + 1) % d.modulus;
-
-        if (!d.t1.running()) {
-            // log() << d.connection_id << " >>>>>>> t1 start from sending";
-            d.t1.start();
-            d.t3.stop();
-        }
-    }
-}
-
-ConnectionState::stateptr_t
-ConnectionState::connected_timer_recovery_disc(const ax25::Packet& p)
-{
-    clear_iframe_queue();
-    const auto f = p.disc().poll();
-    send_ua(f);
-    log() << d.connection_id << " DL-DISCONNECT indication";
-    // log() << d.connection_id << " Disconnect t1 stop";
-    d.t1.stop();
-    d.t3.stop();
-    return std::make_unique<States::Disconnected>(connection_);
-}
-
 void Connection::deliver(const ax25::Packet& p)
 {
     assert(p.has_iframe());
@@ -1124,4 +1050,3 @@ void Connection::maybe_change_state(std::unique_ptr<ConnectionState>&& st)
 }
 
 } // namespace seqpacket::con
-int wrapmain() { return 0; }

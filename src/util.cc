@@ -15,12 +15,21 @@ limitations under the License.
 */
 #include "util.h"
 
+#include <google/protobuf/text_format.h>
+
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 namespace ax25ms {
+
+std::string proto2string(const google::protobuf::Message& proto)
+{
+    std::string str;
+    google::protobuf::TextFormat::PrintToString(proto, &str);
+    return str;
+}
 
 std::string str2hex(std::string_view data)
 {
