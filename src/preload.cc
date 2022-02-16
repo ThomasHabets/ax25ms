@@ -189,6 +189,7 @@ private:
 
     std::mutex read_queue_mu_;
     std::condition_variable read_queue_cv_;
+    bool stream_closed_ = false;
 
     void set_read_ready()
     {
@@ -380,8 +381,11 @@ void Connection::read_thread_main()
         fds_.write_handler_fd("x");
     }
     // TODO: Finish() and stuff.
+    std::unique_lock<std::mutex> lk(read_queue_mu_);
+    stream_closed_ = true;
     log() << "Stream ended";
     fds_.close_handler_fd();
+    read_queue_cv_.notify_all();
 }
 
 ssize_t Connection::read(void* buf, size_t count)
@@ -390,7 +394,11 @@ ssize_t Connection::read(void* buf, size_t count)
         ax25ms::SeqConnectAcceptResponse resp;
         {
             std::unique_lock<std::mutex> lk(read_queue_mu_);
-            read_queue_cv_.wait(lk, [this] { return !read_queue_.empty(); });
+            read_queue_cv_.wait(
+                lk, [this] { return !read_queue_.empty() || stream_closed_; });
+            if (read_queue_.empty() && stream_closed_) {
+                return 0;
+            }
             resp = read_queue_.front();
             read_queue_.pop_front();
             read_queue_cv_.notify_one();
@@ -803,7 +811,9 @@ ssize_t write(int fd, const void* buf, size_t count)
         return orig_write(fd, buf, count);
     }
     log() << "write(AF_AX25, , " << count << ")";
-    return con->write(buf, count);
+    const auto rc = con->write(buf, count);
+    log() << "… write(AF_AX25, , " << count << ") = " << rc;
+    return rc;
 }
 
 int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)
