@@ -577,6 +577,12 @@ int Connection::accept(struct sockaddr* addr, socklen_t* addrlen) const
     }
 
     addr->sa_family = AF_AX25;
+    const auto peer = resp.packet().metadata().address().address();
+    if (ax25_aton(peer.c_str(), sa) == -1) {
+        log() << "ax25_aton() failed on address returned from server: <" << peer << ">";
+        errno = ECONNREFUSED;
+        return -1;
+    }
     const auto fd = newcon->fd();
     newcon->set_stream(std::move(stream));
     if (!connections.insert(std::move(newcon))) {

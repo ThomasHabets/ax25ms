@@ -133,12 +133,11 @@ public:
     }
 
     template <typename T>
-    void apply(T func)
+    auto apply(T func)
     {
         std::unique_lock<std::mutex> lk(mu_);
-        // TODO: assert func() returns void.
-        func(con_);
         cv_.notify_all();
+        return func(con_);
     }
 
     // Return false for second arg if connection has died.
@@ -168,6 +167,8 @@ public:
             return { ret, true };
         }
     }
+
+    int id() const { return id_; }
 
 private:
     void deliver(std::string_view sv);
@@ -287,15 +288,16 @@ public:
             return;
         }
 
+        auto src = packet.src();
+        if (packet.has_sabm() || packet.has_sabme()) {
+            src = "";
+        }
+
         // TODO: slightly cleaner to not do lookup on packets that are not seqpackets.
-        auto connitr = connections_.find({ packet.dst(), packet.src() });
+        auto connitr = connections_.find({ packet.dst(), src });
         if (connitr == connections_.end()) {
-            connitr = connections_.find({ packet.dst(), "" });
-            if (connitr == connections_.end()) {
-                log() << "Unknown connection src=" << packet.src()
-                      << " dst=" << packet.dst();
-                return;
-            }
+            log() << "Unknown connection src=" << packet.src() << " dst=" << packet.dst();
+            return;
         }
         auto& conn = connitr->second;
         if (packet.has_ua()) {
@@ -367,7 +369,7 @@ public:
         if (!req.packet().has_metadata()) {
             return grpc::Status(grpc::INVALID_ARGUMENT, "initial burst had no metadata");
         }
-        const auto dst = req.packet().metadata().address().address();
+        auto dst = req.packet().metadata().address().address();
         const auto src = req.packet().metadata().source_address().address();
 
         // Lifetime of ce is until end of this function, since nothing else deletes it.
@@ -384,13 +386,25 @@ public:
 
         // TODO: also await ctx cancellation.
         ce.await_state_not(seqpacket::con::StateNames::Disconnected);
-        log() << "Connection accepted!";
+        {
+            dst = ce.apply([](auto& con) { return con.dst(); });
+            std::unique_lock<std::mutex> lk(mu_);
+            auto node = connections_.extract({ src, "" });
+            log() << ce.id() << " accept changing to <" << src << "> <" << dst << ">";
+            node.key() = std::make_pair(src, dst);
+            connections_.insert(std::move(node));
+        }
+
+        log() << ce.id() << " Connection accepted!";
 
         // Send connection metadata
         {
-            ax25ms::SeqConnectAcceptResponse metadata;
-            if (!stream->Write(metadata)) {
-                log() << "Failed to write to stream";
+            ax25ms::SeqConnectAcceptResponse resp;
+            auto& meta = *resp.mutable_packet()->mutable_metadata();
+            meta.mutable_address()->set_address(dst);
+            meta.mutable_source_address()->set_address(src);
+            if (!stream->Write(resp)) {
+                log() << ce.id() << "Failed to write to stream";
                 return grpc::Status(grpc::UNKNOWN,
                                     "failed to inform client that we were successful");
             }
@@ -402,13 +416,13 @@ public:
             for (;;) {
                 auto [payload, ok] = ce.await_data();
                 if (!ok) {
-                    log() << "Stopping accept reader";
+                    log() << ce.id() << " Stopping accept reader";
                     break;
                 }
                 ax25ms::SeqConnectAcceptResponse data;
                 data.mutable_packet()->set_payload(payload);
                 if (!stream->Write(data)) {
-                    log() << "Failed to write to stream";
+                    log() << ce.id() << "Failed to write to stream";
                     break;
                 }
             }
@@ -417,7 +431,7 @@ public:
         while (stream->Read(&req)) {
             ce.apply([&req](auto& con) { con.dl_data(req.packet().payload()); });
         }
-        log() << "Accept connection ended";
+        log() << ce.id() << " Accept connection ended";
         ce.apply([](auto& con) { con.dl_disconnect(); });
         receive_thread.join();
         {
@@ -463,6 +477,7 @@ public:
         const auto dst = req.packet().metadata().address().address();
         const auto src = req.packet().metadata().source_address().address();
 
+        log() << " connect() inserting <" << src << "> <" << dst << ">";
         auto& ce = *([this, &src, &dst] {
             Connection::send_func_t fs = [this](auto& p) { return send(p); };
             auto conu = std::make_unique<ConnEntry>(get_new_id(), fs);
@@ -512,8 +527,9 @@ public:
         while (stream->Read(&req)) {
             ce.apply([&req](auto& con) { con.dl_data(req.packet().payload()); });
         }
-        log() << "Connection ended";
+        log() << ce.id() << " Connection ended";
         ce.apply([](auto& con) { con.dl_disconnect(); });
+        receive_thread.join();
         return grpc::Status::OK;
     }
 

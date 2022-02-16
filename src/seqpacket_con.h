@@ -303,6 +303,8 @@ public:
 
     void set_src(std::string_view sv) { src_ = sv; }
     void set_dst(std::string_view sv) { dst_ = sv; }
+    std::string dst() const { return dst_; }
+    std::string src() const { return src_; }
     void deliver(const ax25::Packet& p);
     std::string state_name() const { return state_->name(); }
     const ConnectionState& state() const { return *state_; }
