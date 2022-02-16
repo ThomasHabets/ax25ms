@@ -148,13 +148,16 @@ public:
             // log() << id_ << " await_data() (post lock)";
             wait(lk, [this] {
                 if (!con_.state().can_receive_data()) {
-                    return false;
+                    return true;
                 }
                 if (!received_.empty()) {
                     return true;
                 }
                 return false;
             });
+            if (!con_.state().can_receive_data()) {
+                return { "", false };
+            }
 
             if (received_.empty()) {
                 continue;
