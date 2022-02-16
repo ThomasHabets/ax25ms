@@ -413,7 +413,7 @@ public:
             }
         }
 
-        // Start receiving.
+        // Start receiving from router.
         std::jthread receive_thread([ctx, &ce, stream] {
             pthread_setname_np(pthread_self(), "accept_receive_read");
             for (;;) {
@@ -431,6 +431,8 @@ public:
             }
             ctx->TryCancel(); // TODO: defer this.
         });
+
+        // Receive from RPC client.
         while (stream->Read(&req)) {
             ce.apply([&req](auto& con) { con.dl_data(req.packet().payload()); });
         }
@@ -439,6 +441,8 @@ public:
         receive_thread.join();
         {
             std::unique_lock<std::mutex> lk(mu_);
+            log() << ce.id() << " Removing accept connection entry <" << src << "> <"
+                  << dst << ">";
             connections_.erase({ src, dst });
         }
         return grpc::Status::OK;
@@ -487,12 +491,15 @@ public:
             std::unique_lock<std::mutex> lk(mu_);
             auto [itr, ok] = connections_.insert({ { src, dst }, std::move(conu) });
             if (!ok) {
-                throw std::runtime_error("Failed to insert connection. Duplicate?");
+                throw std::runtime_error(std::to_string(conu->id()) +
+                                         " Failed to insert connection. Duplicate?");
             }
             return itr->second.get();
         }());
-        Defer er([this, &src, &dst] {
+        Defer er([this, &src, &dst, &ce] {
             std::unique_lock<std::mutex> lk(mu_);
+            log() << ce.id() << " Removing connect connection entry <" << src << "> <"
+                  << dst << ">";
             connections_.erase({ src, dst });
         });
 
@@ -530,7 +537,7 @@ public:
         while (stream->Read(&req)) {
             ce.apply([&req](auto& con) { con.dl_data(req.packet().payload()); });
         }
-        log() << ce.id() << " Connection ended";
+        log() << ce.id() << " Client Connection ended";
         ce.apply([](auto& con) { con.dl_disconnect(); });
         receive_thread.join();
         return grpc::Status::OK;
