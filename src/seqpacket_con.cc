@@ -94,40 +94,49 @@ void ConnectionState::dl_error(const DLError& e) const
 
 ConnectionState::stateptr_t ConnectionState::iframe(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected iframe in state " + name());
+    log() << d.connection_id << " ERROR: unhandled iframe in state " << name();
+    return nullptr;
 }
 
 ConnectionState::stateptr_t ConnectionState::ua(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected ua in state " + name());
+    log() << d.connection_id << " ERROR: unhandled UA in state " << name();
+    return nullptr;
 }
 ConnectionState::stateptr_t ConnectionState::dm(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected dm in state " + name());
+    log() << d.connection_id << " ERROR: unhandled DM in state " << name();
+    return nullptr;
 }
 ConnectionState::stateptr_t ConnectionState::disc(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected disc in state " + name());
+    log() << d.connection_id << " ERROR: unhandled DISC in state " << name();
+    return nullptr;
 }
 ConnectionState::stateptr_t ConnectionState::sabm(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected sabm in state " + name());
+    log() << d.connection_id << " ERROR: unhandled SABM in state " << name();
+    return nullptr;
 }
 ConnectionState::stateptr_t ConnectionState::sabme(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected sabme in state " + name());
+    log() << d.connection_id << " ERROR: unhandled SABME in state " << name();
+    return nullptr;
 }
 ConnectionState::stateptr_t ConnectionState::frmr(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected frmr in state " + name());
+    log() << d.connection_id << " ERROR: unhandled FRMR in state " << name();
+    return nullptr;
 }
 ConnectionState::stateptr_t ConnectionState::rr(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected rr in state " + name());
+    log() << d.connection_id << " ERROR: unhandled RR in state " << name();
+    return nullptr;
 }
 ConnectionState::stateptr_t ConnectionState::ui(const ax25::Packet& p)
 {
-    throw std::runtime_error("Unexpected ui in state " + name());
+    log() << d.connection_id << " ERROR: unhandled UI in state " << name();
+    return nullptr;
 }
 
 ConnectionState::stateptr_t ConnectionState::dl_data(std::string_view sv)
