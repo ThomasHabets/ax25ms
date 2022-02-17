@@ -88,8 +88,8 @@ struct ConnectionData {
     bool acknowledge_pending = false;
     double srt = 0;
     int t1v = 0; // Next value for T1; default init value is initial value of SRT.
-    unsigned int n1 = 200; // Max number of octets in the information field of a frame.
-    int n2 = 3;            // Max number of retries permitted.
+    unsigned int n1 = 65000; // Max number of octets in the information field of a frame.
+    int n2 = 3;              // Max number of retries permitted.
 
     Timer t1{ "t1" }; // Outstanding I frame or P-bit
     Timer t2{ "t2" }; // Response delay timer. 6.7.1.2
