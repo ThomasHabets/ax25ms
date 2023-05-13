@@ -353,7 +353,10 @@ void Connection::read_thread_main()
 {
     {
         std::unique_lock<std::mutex> lk(read_queue_mu_);
-        read_queue_cv_.wait(lk, [this] { return read_ready_; });
+        read_queue_cv_.wait(lk, [this] { return read_ready_ || read_stop_; });
+        if (read_stop_) {
+            return;
+        }
     }
     log() << "Read ready!";
 
