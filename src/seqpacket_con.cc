@@ -321,19 +321,35 @@ void ConnectionState::ui_check(bool command)
 // Page 109.
 void ConnectionState::select_t1_value()
 {
-    // TODO: this updates t1 and according to RTT. Temp disable this.
-    d.srt = 1500;
-    d.t1.set(d.srt * 2);
-    return;
-
-    double new_srt = d.srt;
-    // int new_t1_ = d.t1.get();
-    if (d.rc) {
-        //        int t1_remain = 0; // remaining time on T1 when last stopped
-        //        new_srt = (7 / 8 * srt_) + (1 / 8 * t1_) - (1 / 8 * t1_remain);
-        //        t1_ = srt_ * 2; // TODO: what?
+    if (false) {
+        // TODO: this updates t1 and according to RTT. Temp disable this.
+        d.srt = 1500;
+        d.t1.set(d.srt * 2);
+        return;
     }
-    d.srt = new_srt;
+
+    int min_srt = 100;
+    int max_srt = 10000;
+
+    auto clamp = [min_srt, max_srt](int in) {
+        return std::max(min_srt, std::min(max_srt, in));
+    };
+
+    if (d.rc == 0) {
+        log() << "Adjusting rc=0 t1=" << d.t1.get() << " srt=" << d.srt
+              << " remain=" << d.t1.stopped_remaining();
+        d.srt = clamp(7.0 / 8.0 * d.srt +
+                      1.0 / 8.0 * (d.t1.get() - d.t1.stopped_remaining()));
+        // TODO: should this be old srt or new?
+        d.t1.set(clamp(d.srt * 2));
+        log() << "New values: t1=" << d.t1.get() << " srt=" << d.srt;
+    } else if (d.t1.expired()) {
+        log() << "Adjusting t1 expired t1=" << d.t1.get() << " srt=" << d.srt;
+
+        // TODO: should it be *2 again? Seems excessive.
+        d.t1.set(clamp((2 << d.rc) * d.srt));
+        log() << "New values: t1=" << d.t1.get() << " srt=" << d.srt;
+    }
 }
 
 // Page 109.
@@ -454,13 +470,13 @@ ConnectionState::stateptr_t TimerRecovery::rr(const ax25::Packet& p)
     if (!command && pf) {
         d.t1.stop();
         select_t1_value();
-        // log() << d.connection_id << " XXX Va nr Vs " << d.va << nr << d.vs;
+        log() << d.connection_id << " XXX Va nr Vs " << d.va << nr << d.vs;
         if (!in_range(d.va, nr, d.vs, d.modulus)) {
             nr_error_recovery();
             return std::make_unique<AwaitingConnection>(connection_);
         }
         update_ack(nr);
-        // log() << d.connection_id << " XXX Vs Va " << d.vs << d.va;
+        log() << d.connection_id << " XXX Vs Va " << d.vs << d.va;
         if (d.vs != d.va) {
             invoke_retransmission(nr);
             return nullptr;

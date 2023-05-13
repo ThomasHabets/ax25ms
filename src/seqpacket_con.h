@@ -48,11 +48,16 @@ public:
         running_ = true;
         deadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds{ ms_ };
     }
+    int stopped_remaining_ms_ = 0;
     void stop()
     {
         ax25ms::log() << connection_id_ << " Stopping timer " << name_;
+        stopped_remaining_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    deadline_ - std::chrono::steady_clock::now())
+                                    .count();
         running_ = false;
     }
+    int stopped_remaining() { return std::max(0, stopped_remaining_ms_); }
     void restart()
     {
         stop();
