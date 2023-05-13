@@ -470,13 +470,13 @@ ConnectionState::stateptr_t TimerRecovery::rr(const ax25::Packet& p)
     if (!command && pf) {
         d.t1.stop();
         select_t1_value();
-        log() << d.connection_id << " XXX Va nr Vs " << d.va << nr << d.vs;
+        // log() << d.connection_id << " XXX Va nr Vs " << d.va << nr << d.vs;
         if (!in_range(d.va, nr, d.vs, d.modulus)) {
             nr_error_recovery();
             return std::make_unique<AwaitingConnection>(connection_);
         }
         update_ack(nr);
-        log() << d.connection_id << " XXX Vs Va " << d.vs << d.va;
+        // log() << d.connection_id << " XXX Vs Va " << d.vs << d.va;
         if (d.vs != d.va) {
             invoke_retransmission(nr);
             return nullptr;
