@@ -337,9 +337,9 @@ void ConnectionState::select_t1_value()
 
     if (d.rc == 0) {
         log() << "Adjusting rc=0 t1=" << d.t1.get() << " srt=" << d.srt
-              << " remain=" << d.t1.stopped_remaining();
+              << " remain=" << d.t1.stopped_remaining_ms();
         d.srt = clamp(7.0 / 8.0 * d.srt +
-                      1.0 / 8.0 * (d.t1.get() - d.t1.stopped_remaining()));
+                      1.0 / 8.0 * (d.t1.get() - d.t1.stopped_remaining_ms()));
         // TODO: should this be old srt or new?
         d.t1.set(clamp(d.srt * 2));
         log() << "New values: t1=" << d.t1.get() << " srt=" << d.srt;
