@@ -72,6 +72,13 @@ serial_SOURCES=\
 src/main.cc \
 src/serial.cc \
 src/util.cc \
+src/parse.cc \
+src/serialize.cc \
+src/parse_service.cc \
+src/fcs.cc \
+proto/gen/ax25.pb.cc \
+proto/gen/aprs.pb.cc \
+proto/gen/ax25.grpc.pb.cc \
 proto/gen/api.grpc.pb.cc \
 proto/gen/api.pb.cc
 

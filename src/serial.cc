@@ -20,6 +20,7 @@ limitations under the License.
  * Implements the Router service.
  */
 #include "fdwrap.h"
+#include "parse_service.h"
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
 #include "util.h"
@@ -393,6 +394,8 @@ int wrapmain(int argc, char** argv)
                                1000);
     builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
+    auto parser = make_parse_service();
+    builder.RegisterService(parser.get());
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
     ax25ms::log() << "Running…";
     server->Wait();
