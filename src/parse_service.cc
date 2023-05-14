@@ -34,8 +34,7 @@ grpc::Status Parser::Parse(grpc::ServerContext* ctx,
                            const ax25::ParseRequest* req,
                            ax25::ParseResponse* out)
 {
-    // TODO: support FCS.
-    auto [packet, status] = ax25::parse(req->payload(), false);
+    auto [packet, status] = ax25::parse(req->payload(), req->check_fcs());
     *out->mutable_packet() = packet;
     return status;
 }
@@ -44,8 +43,7 @@ grpc::Status Parser::Serialize(grpc::ServerContext* ctx,
                                const ax25::SerializeRequest* req,
                                ax25::SerializeResponse* out)
 {
-    // TODO: support FCS.
-    *out->mutable_payload() = ax25::serialize(req->packet(), false);
+    *out->mutable_payload() = ax25::serialize(req->packet(), req->set_fcs());
     return grpc::Status::OK;
 }
 
