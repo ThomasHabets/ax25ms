@@ -319,6 +319,22 @@ void ConnectionState::ui_check(bool command)
 }
 
 // Page 109.
+/*
+ * select_t1_value() chooses the new T1 timer value.
+ *
+ * T1 is how long to wait before retransmitting an unacknowledged
+ * frame.
+ *
+ * The code currently uses the algorithm in the specs, except with
+ * min/max clamping to 100ms-10s.
+ *
+ * Linux has three modes, depending on what AX25_BACKOFF is set to.
+ *   0. None.
+ *   1. Linear.
+ *   2. Exponential.
+ * Where linear (1) is default.
+ * See kernel source net/ax25/ax25_subr.c:ax25_calculate_t1
+ */
 void ConnectionState::select_t1_value()
 {
     if (false) {
