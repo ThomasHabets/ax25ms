@@ -30,8 +30,11 @@ limitations under the License.
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <termios.h>
+#include <type_traits>
+#include <charconv>
 #include <cstdint>
 #include <iomanip>
+#include <optional>
 #include <queue>
 #include <string>
 #include <thread>
@@ -45,10 +48,26 @@ constexpr uint8_t FESC = 0xDB;
 constexpr uint8_t TFEND = 0xDC;
 constexpr uint8_t TFESC = 0xDD;
 
+std::optional<int32_t> speed;
+
+template <typename T>
+std::optional<T> parse_int(std::string_view sv)
+{
+    T i;
+    const auto [ptr, ec] = std::from_chars(sv.begin(), sv.end(), i);
+    if (ec != std::errc()) {
+        return {};
+    }
+    if (ptr != sv.end()) {
+        return {};
+    }
+    return i;
+}
 
 [[noreturn]] void usage(const char* av0, int err)
 {
-    std::cout << av0 << ": Usage [ -h ] [ -l <listen addr> -p </dev/...>\n";
+    std::cout << av0
+              << ": Usage [ -h ] [ -l <listen addr> ] [-s <speed> ] -p </dev/...>\n";
     exit(err);
 }
 
@@ -312,6 +331,51 @@ private:
     std::jthread writer_;
 };
 
+std::optional<speed_t> choose_speed(int32_t speed)
+{
+    switch (speed) {
+    case 0:
+        return B0;
+    case 50:
+        return B50;
+    case 75:
+        return B75;
+    case 110:
+        return B110;
+    case 134:
+        return B134;
+    case 150:
+        return B150;
+    case 200:
+        return B200;
+    case 300:
+        return B300;
+    case 600:
+        return B600;
+    case 1200:
+        return B1200;
+    case 1800:
+        return B1800;
+    case 2400:
+        return B2400;
+    case 4800:
+        return B4800;
+    case 9600:
+        return B9600;
+    case 19200:
+        return B19200;
+    case 38400:
+        return B38400;
+    case 57600:
+        return B57600;
+    case 115200:
+        return B115200;
+    case 230400:
+        return B230400;
+    }
+    return {};
+}
+
 FDWrap open_serial(std::string_view portv)
 {
     const auto port = std::string(portv);
@@ -333,7 +397,15 @@ FDWrap open_serial(std::string_view portv)
         throw std::runtime_error("failed to get termios for " + port + ": " +
                                  strerror(errno));
     }
-    // cfsetospeed(&tc,B57600);
+
+    if (speed) {
+        if (auto s = choose_speed(speed.value()); s) {
+            cfsetospeed(&tc, s.value());
+            cfsetispeed(&tc, s.value());
+        } else {
+            throw std::runtime_error("invalid speed " + std::to_string(speed.value()));
+        }
+    }
     tc.c_cc[VMIN] = 0;
     tc.c_cc[VTIME] = 0;
     cfmakeraw(&tc);
@@ -355,7 +427,7 @@ int wrapmain(int argc, char** argv)
     std::string listen = "[::]:12345";
     {
         int opt;
-        while ((opt = getopt(argc, argv, "hl:p:")) != -1) {
+        while ((opt = getopt(argc, argv, "hl:p:s:")) != -1) {
             switch (opt) {
             case 'p':
                 port = optarg;
@@ -363,6 +435,15 @@ int wrapmain(int argc, char** argv)
             case 'l':
                 listen = optarg;
                 break;
+            case 's': {
+                using T = std::remove_reference<decltype(speed.value())>::type;
+                speed = parse_int<T>(optarg);
+                if (!speed) {
+                    log() << "Invalid serial speed: " << optarg;
+                    return EXIT_FAILURE;
+                }
+                break;
+            }
             case 'h':
                 usage(argv[0], EXIT_SUCCESS);
             default:
