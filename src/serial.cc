@@ -215,8 +215,8 @@ public:
                 }
                 if (rc == -1) {
                     // TODO: try to reopen until success.
-                    throw std::runtime_error(std::string("failed to read from serial: ") +
-                                             strerror(errno));
+                    throw std::system_error(
+                        errno, std::generic_category(), "read(serial)");
                 }
                 buf.insert(buf.end(), &tbuf.data()[0], &tbuf.data()[rc]);
                 if (buf.empty()) {
@@ -289,8 +289,8 @@ public:
         while (size > 0) {
             const auto rc = ::write(serial_.get(), p, size);
             if (rc == -1) {
-                throw std::runtime_error(std::string("write() to serial failed: ") +
-                                         strerror(errno));
+                throw std::system_error(
+                    errno, std::generic_category(), "writing to serial");
             }
             size -= rc;
             p += rc;
@@ -381,21 +381,21 @@ FDWrap open_serial(std::string_view portv)
     const auto port = std::string(portv);
     const int fd = open(port.c_str(), O_RDWR | O_NOCTTY);
     if (fd == -1) {
-        throw std::runtime_error("failed to open " + port + ": " + strerror(errno));
+        throw std::system_error(errno, std::generic_category(), "opening " + port);
     }
     FDWrap ret(fd);
 
     // Set exclusive mode.
     if (ioctl(fd, TIOCEXCL, nullptr, 0)) {
-        throw std::runtime_error("failed to set TIOCEXCL for " + port + ": " +
-                                 strerror(errno));
+        throw std::system_error(
+            errno, std::generic_category(), "ioctl(TIOCEXCL) on " + port);
     }
 
     // Set serial attributes.
     struct termios tc;
     if (tcgetattr(fd, &tc)) {
-        throw std::runtime_error("failed to get termios for " + port + ": " +
-                                 strerror(errno));
+        throw std::system_error(
+            errno, std::generic_category(), "tcgetattr(serial) on " + port);
     }
 
     if (speed) {
@@ -403,7 +403,7 @@ FDWrap open_serial(std::string_view portv)
             cfsetospeed(&tc, s.value());
             cfsetispeed(&tc, s.value());
         } else {
-            throw std::runtime_error("invalid speed " + std::to_string(speed.value()));
+            throw std::invalid_argument("invalid speed " + std::to_string(speed.value()));
         }
     }
     tc.c_cc[VMIN] = 0;
@@ -411,8 +411,8 @@ FDWrap open_serial(std::string_view portv)
     cfmakeraw(&tc);
     tc.c_cflag &= ~CRTSCTS; // Turn off hardware flow control.
     if (tcsetattr(fd, TCSANOW, &tc)) {
-        throw std::runtime_error("failed to set termios for " + port + ": " +
-                                 strerror(errno));
+        throw std::system_error(
+            errno, std::generic_category(), "tcsetattr(serial) on " + port);
     }
     return ret;
 }

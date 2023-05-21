@@ -120,10 +120,12 @@ public:
     void write_handler_fd(std::string_view sv)
     {
         const auto rc = orig_write(handler_fd(), sv.data(), sv.size());
+        if (rc == -1) {
+            throw std::system_error(errno, std::generic_category(), "write");
+        }
         if (rc != static_cast<ssize_t>(sv.size())) {
-            // TODO
-            throw std::runtime_error("write failed: " + std::to_string(rc) + " " +
-                                     strerror(errno));
+            // TODO: do a full write.
+            throw std::runtime_error("short write: " + std::to_string(rc));
         }
     }
 
@@ -314,7 +316,7 @@ std::pair<int, int> make_fds()
     // Create a signalling fd pair for things like select().
     int fds[2];
     if (-1 == socketpair(PF_LOCAL, SOCK_STREAM, 0, fds)) {
-        throw std::runtime_error(std::string("socketpair(): ") + strerror(errno));
+        throw std::system_error(errno, std::generic_category(), "creating socketpair");
     }
     return { fds[0], fds[1] };
 }
@@ -410,10 +412,11 @@ ssize_t Connection::read(void* buf, size_t count)
         {
             char buf[1];
             const auto rc = orig_read(fds_.client_fd(), buf, 1);
+            if (rc == -1) {
+                throw std::system_error(errno, std::generic_category(), "reading token");
+            }
             if (rc != 1) {
-                // TODO
-                throw std::runtime_error("couldn't read the token: " +
-                                         std::to_string(rc) + " " + strerror(errno));
+                throw std::runtime_error("EOF reading the token: " + std::to_string(rc));
             }
         }
         if (!resp.has_packet()) {
