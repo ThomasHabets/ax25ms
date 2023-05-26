@@ -50,6 +50,9 @@ src/parse.cc \
 src/fcs.cc \
 src/mic-e.cc \
 src/util.cc \
+src/serialize.cc \
+src/parse_service.cc \
+proto/gen/ax25.grpc.pb.cc \
 proto/gen/ax25.pb.cc \
 proto/gen/aprs.pb.cc \
 proto/gen/api.grpc.pb.cc \

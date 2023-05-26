@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #include "fdwrap.h"
+#include "parse_service.h"
 #include "proto/gen/api.grpc.pb.h"
 #include "proto/gen/api.pb.h"
 #include "util.h"
@@ -139,6 +140,8 @@ int wrapmain(int argc, char** argv)
                                1000);
     builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
+    auto parser = make_parse_service();
+    builder.RegisterService(parser.get());
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
     log() << "Running…";
     server->Wait();
