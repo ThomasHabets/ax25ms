@@ -50,6 +50,19 @@ implementation will re-send the whole window 10 times.
  tnc <KISS> serial <gRPC> seqpacket <gRPC> ax25ms_axsh
 ```
 
+## Protobuf
+
+Protobufs are a bit annoying latest thing that worked was:
+
+```
+cd proto
+protoc \
+    --cpp_out=gen \
+    --grpc_out=gen \
+    --plugin=protoc-gen-grpc=/usr/bin/grpc_cpp_plugin \
+    *.proto
+```
+
 ## How to test it
 
 If you have an existing program that uses `AX25_SEQPACKET`, and a TNC
