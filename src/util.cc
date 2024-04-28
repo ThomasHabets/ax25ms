@@ -20,6 +20,7 @@ limitations under the License.
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <string>
 namespace ax25ms {
