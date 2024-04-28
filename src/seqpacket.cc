@@ -380,7 +380,8 @@ public:
             Connection::send_func_t fs = [this](auto& p) { return send(p); };
             auto conu = std::make_unique<ConnEntry>(get_new_id(), fs);
             std::unique_lock<std::mutex> lk(mu_);
-            auto [itr, ok] = connections_.insert({ { src, dst }, std::move(conu) });
+            auto [itr, ok] =
+                connections_.insert({ std::make_pair(src, dst), std::move(conu) });
             if (!ok) {
                 throw std::runtime_error("Failed to insert connection. Duplicate?");
             }
@@ -489,7 +490,8 @@ public:
             Connection::send_func_t fs = [this](auto& p) { return send(p); };
             auto conu = std::make_unique<ConnEntry>(get_new_id(), fs);
             std::unique_lock<std::mutex> lk(mu_);
-            auto [itr, ok] = connections_.insert({ { src, dst }, std::move(conu) });
+            auto [itr, ok] =
+                connections_.insert({ std::make_pair(src, dst), std::move(conu) });
             if (!ok) {
                 throw std::runtime_error(std::to_string(conu->id()) +
                                          " Failed to insert connection. Duplicate?");
