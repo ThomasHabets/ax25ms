@@ -44,6 +44,7 @@ sys/types.h \
 grp.h \
 pwd.h \
 unistd.h \
+netax25/axlib.h \
 google/protobuf/stubs/logging.h \
 google/protobuf/stubs/common.h \
 ])
