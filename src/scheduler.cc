@@ -33,12 +33,13 @@ void Timer::run()
     for (;;) {
         auto getcb = [this] {
             std::unique_lock<std::mutex> lk(mu_);
+            std::unique_ptr<timer_t> ret;
             for (;;) {
                 if (timers_.empty()) {
                     cv_.wait(lk, [this] { return !timers_.empty() || shutdown_; });
                 }
                 if (shutdown_) {
-                    return std::unique_ptr<timer_t>();
+                    return ret;
                 }
                 auto cur = timers_.begin()->first;
 
@@ -65,10 +66,10 @@ void Timer::run()
             }
             // Timeout has happened for the first item.
             auto first = timers_.begin();
-            auto entry = std::move(first->second);
+            ret = std::move(first->second);
 
             timers_.erase(first);
-            return entry;
+            return ret;
         }();
         if (shutdown_) {
             break;

@@ -132,8 +132,7 @@ std::string kiss_unescape(std::string_view sv)
             throw std::runtime_error("INVALID Escape");
         }
     }
-    auto ret = std::string(tmp.begin(), tmp.end());
-    return ret;
+    return std::string(tmp.begin(), tmp.end());
 }
 
 class Queue
