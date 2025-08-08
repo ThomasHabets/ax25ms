@@ -50,6 +50,18 @@ implementation will re-send the whole window 10 times.
  tnc <KISS> serial <gRPC> seqpacket <gRPC> ax25ms_axsh
 ```
 
+## How to build it
+
+Make sure you have the protobuf-compiler, protobuf-compiler-grpc
+and libgrpc++-dev packages installed.
+Then:
+```
+ ./bootstrap.sh
+ ./configure --prefix=/usr/local
+ make
+ make install
+```
+
 ## How to test it
 
 If you have an existing program that uses `AX25_SEQPACKET`, and a TNC
@@ -61,13 +73,13 @@ able to start the setup using something like:
 For my Kenwood TH-D74 via bluetooth, this is:
 
 ```
-$ ./serial -p /dev/rfcomm0 -l '[::]:12001'
+$ /usr/local/bin/serial -p /dev/rfcomm0 -l '[::]:12001'
 ```
 
 ### Start the seqpacket daemon, using the serial service as a "router"
 
 ```
-$ ./seqpacket -r localhost:12001 -l '[::]:12002'
+$ /usr/local/bin/seqpacket -r localhost:12001 -l '[::]:12002'
 ```
 
 ### Run your program using libpreload
@@ -75,14 +87,14 @@ $ ./seqpacket -r localhost:12001 -l '[::]:12002'
 ```
 $ export AX25_ADDR=M0XXX-1        # Address used by the interface.
 $ export AX25_ROUTER=localhost:12002  # seqpacket service location
-$ LD_PRELOAD=$(pwd)/libpreload.so axsh -r radio -s M0XXX-9 2E0XXX-3
+$ LD_PRELOAD=/usr/local/lib/libpreload.so axsh -r radio -s M0XXX-9 2E0XXX-3
 ```
 
 If that works you can make the `LD_PRELOAD` permanent on a binary
 with:
 
 ```
-$ patchelf --add-needed $(pwd)/libpreload.so $(which axsh)
+$ patchelf --add-needed /usr/local/lib/libpreload.so $(which axsh)
 ```
 
 You'll still have to set `AX25_ADDR` and `AX25_ROUTER` of course.
